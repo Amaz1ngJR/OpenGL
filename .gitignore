@@ -1,0 +1,27 @@
+# Build artifacts
+build/
+.xmake/
+
+# CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Compiled
+*.o
+*.a
+*.so
+*.dylib
+*.exe
