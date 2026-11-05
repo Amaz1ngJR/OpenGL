@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "ModelScene.h"
 #include "Shader.h"
 #include "Camera.h"
 #include "imgui.h"
@@ -14,7 +15,7 @@ namespace {
 // 场景列表的顺序同时是 ImGui 选项的索引，新增场景时须同步注册工厂。
 const std::vector<SceneInfo> sceneInfos = {
     {"No scene"}, {"Triangle"}, {"Uniform rectangle"}, {"Transformations"},
-    {"Texture"}, {"Phong lighting + materials"}
+    {"Texture"}, {"Phong lighting + materials"}, {"Model viewer"}
 };
 
 // 网格对象独占 VAO/VBO/EBO，析构时释放 GPU 资源；不可复制以避免重复释放。
@@ -404,7 +405,7 @@ private:
 const std::vector<SceneInfo>& availableScenes() { return sceneInfos; }
 // 工厂按面板索引延迟创建单个场景；旧场景由 unique_ptr 自动析构释放资源。
 std::unique_ptr<Scene> createScene(int index, const std::string& root) {
-    // 索引 0 为清屏场景；其余索引对应列表中的五个教程示例。
+    // 索引 0 为清屏场景；其余选项为教程示例与本地模型预览。
     switch (index) {
         case 0: return std::make_unique<EmptyScene>();
         case 1: return std::make_unique<TriangleScene>(root, false);
@@ -412,6 +413,7 @@ std::unique_ptr<Scene> createScene(int index, const std::string& root) {
         case 3: return std::make_unique<TransformScene>(root);
         case 4: return std::make_unique<TextureScene>(root);
         case 5: return std::make_unique<LightingScene>(root);
+        case 6: return createModelScene(root);
         default: throw std::out_of_range("Invalid scene index");
     }
 }

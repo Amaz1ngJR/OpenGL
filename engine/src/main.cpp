@@ -1,4 +1,6 @@
 #include "Scene.h"
+#include "ModelScene.h"
+#include "FileDialog.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -61,14 +63,14 @@ void toggleLightPause(Scene& scene) {
 }
 
 // 在真实 OpenGL 上下文下反复创建/绘制/销毁所有场景，检查 GL 错误和非空画面。
-void smokeTest(GLFWwindow* window, const std::string& root) {
+void smokeTest(GLFWwindow* window, const std::string& root, const std::string& modelPath = "") {
     int width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
     if (width <= 0 || height <= 0) throw std::runtime_error("No drawable framebuffer");
     std::vector<unsigned char> pixels(static_cast<size_t>(width) * height * 4);
     for (int round = 0; round < 3; ++round) {
         for (int index = 0; index < static_cast<int>(availableScenes().size()); ++index) {
-            auto scene = createScene(index, root);
+            auto scene = index == 6 && !modelPath.empty() ? createModelScene(root, modelPath) : createScene(index, root);
             glViewport(0, 0, width, height);
             glClearColor(0, 0, 0, 1);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -77,7 +79,9 @@ void smokeTest(GLFWwindow* window, const std::string& root) {
             size_t colored = 0;
             for (size_t p = 0; p < pixels.size(); p += 4)
                 if (pixels[p] || pixels[p + 1] || pixels[p + 2]) ++colored;
-            if ((index == 0 && colored != 0) || (index != 0 && colored == 0))
+            // 模型预览尚未选文件时与空场景一样仅清屏，不伪造默认模型。
+            const bool emptyScene = index == 0 || (index == 6 && modelPath.empty());
+            if ((emptyScene && colored != 0) || (!emptyScene && colored == 0))
                 throw std::runtime_error(std::string("Unexpected framebuffer: ") + availableScenes()[index].name);
             if (index == 5) {
                 // 先在 time=1 时绘制并记下光源矩阵与颜色。
@@ -161,6 +165,24 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
         ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_FirstUseEver);
         ImGui::Begin("LearnOpenGL Scenes");
         ImGui::TextUnformatted("Select one scene to render:");
+        if (ImGui::Button("Load local model...")) {
+            try {
+                const std::string path = selectModelFile();
+                if (!path.empty()) {
+                    scene = createModelScene(root, path);
+                    selected = 6;
+                    error.clear();
+                    state.firstMouse = true;
+                    state.mouseX = state.mouseY = state.scroll = 0;
+                }
+            } catch (const std::exception& e) {
+                error = e.what();
+                std::cerr << error << '\n';
+            }
+            // 系统对话框可能泵入鼠标事件；取消或加载失败也不沿用这些位移。
+            state.firstMouse = true;
+            state.mouseX = state.mouseY = state.scroll = 0;
+        }
         const auto& options = availableScenes();
         for (int index = 0; index < static_cast<int>(options.size()); ++index) {
             if (ImGui::RadioButton(options[index].name, selected == index) && selected != index) {
@@ -226,9 +248,11 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
 
 // 唯一应用入口：初始化窗口/GL/ImGui、派发输入、驱动场景和 GUI 帧循环。
 int main(int argc, char** argv) {
-    const bool smoke = argc == 2 && std::string(argv[1]) == "--smoke-test";
-    if (argc > 1 && !smoke) {
-        std::cerr << "Usage: OpenGLLearn [--smoke-test]\n";
+    const bool smoke = argc >= 2 && std::string(argv[1]) == "--smoke-test";
+    std::string modelPath;
+    if (smoke && argc == 4 && std::string(argv[2]) == "--model") modelPath = argv[3];
+    else if (argc != 1 && !(smoke && argc == 2)) {
+        std::cerr << "Usage: OpenGLLearn [--smoke-test [--model <path>]]\n";
         return 1;
     }
     glfwSetErrorCallback([](int, const char* message) { std::cerr << "GLFW: " << message << '\n'; });
@@ -265,7 +289,7 @@ int main(int argc, char** argv) {
     int result = 0;
     try {
         if (!rendererReady) throw std::runtime_error("Failed to initialize ImGui backends");
-        if (smoke) smokeTest(window, OPENGL_LEARN_ROOT);
+        if (smoke) smokeTest(window, OPENGL_LEARN_ROOT, modelPath);
         else run(window, input, OPENGL_LEARN_ROOT);
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';

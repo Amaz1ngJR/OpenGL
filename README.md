@@ -10,7 +10,10 @@
 │   ├── include/                 # 场景、着色器、相机接口
 │   └── src/
 │       ├── main.cpp             # 唯一窗口、ImGui 与主循环
-│       ├── Scenes.cpp           # 场景工厂与五个教程场景
+│       ├── Scenes.cpp           # 教程场景与场景工厂
+│       ├── ModelScene.cpp       # Assimp 静态模型、材质纹理与预览相机
+│       ├── FileDialog.cpp       # Windows 原生模型选择器
+│       ├── FileDialogMac.mm     # macOS 原生模型选择器
 │       ├── Shader.cpp           # GLSL 编译/链接与 uniform 工具
 │       └── Camera.cpp           # 共享 3D 摄像机
 ├── resources/
@@ -21,7 +24,9 @@
 │   ├── glad/                    # OpenGL 函数加载
 │   ├── glm/                     # 向量、矩阵运算
 │   ├── imgui/                   # ImGui 核心及 GLFW/OpenGL3 后端
+│   ├── assimp/                  # Assimp 5.4.3 源码（含内置 zlib）
 │   └── stb_image.h              # 图片加载
+├── cmake/                      # 两种构建共享的 Assimp 配置与 xmake 桥接工程
 ├── CMakeLists.txt               # CMake 构建配置
 └── xmake.lua                    # xmake 构建配置
 ```
@@ -37,6 +42,7 @@
 3. **Transformations**：纹理立方体阵列、模型变换和相机。
 4. **Texture**：在同一个场景中切换单纹理/双纹理混合，并实时调整混合比例、UV 缩放、环绕方式和过滤方式。
 5. **Phong lighting + materials**：在同一个场景中观察 Phong 环境光、漫反射、镜面反射，并实时调节光源轨迹、光源颜色和中心物体材质。
+6. **Model viewer**：通过原生文件对话框选择本地模型，显示基础材质和贴图，并使用键鼠调整视角。
 
 场景按需创建。切换时先创建新场景，创建成功后再销毁旧场景；场景独占的 shader、纹理和网格对象会随场景析构释放。3D 场景支持 **WASD** 移动、按住鼠标右键拖动视角、滚轮缩放；**ESC** 退出。ImGui 标签使用英文，避免默认字体缺少中文字形。
 
@@ -55,7 +61,7 @@
 
 ## 构建与运行
 
-需要 C++17 编译器、OpenGL 3.3 Core Profile，以及 CMake ≥ 3.16 或 xmake。GLFW、GLAD、GLM 和 ImGui 源码均已包含在仓库，不需要下载 ImGui。
+需要 C++17 编译器、OpenGL 3.3 Core Profile 和 **CMake ≥ 3.22**。可直接使用 CMake，或使用 xmake ≥ 2.9.9（xmake 会调用 CMake 构建 Assimp，因此两种方式都须安装 CMake 并加入 PATH）。GLFW、GLAD、GLM、ImGui 和 Assimp 源码均已包含在仓库，构建时不需要从网络下载依赖。
 
 ### CMake
 
@@ -76,7 +82,7 @@ xmake
 xmake run OpenGLLearn
 ```
 
-两个构建系统的生成文件分开放置：CMake 输出在 `build/cmake/`，xmake 输出在 `build/xmake/`。程序使用构建时写入的仓库根路径定位着色器和纹理，因此可以从任意工作目录启动。Windows 可使用 `build\\cmake\\OpenGLLearn.exe` 或 `xmake run OpenGLLearn`。
+两个构建系统的生成文件分开放置：CMake 输出在 `build/cmake/`，xmake 输出在 `build/xmake/`。程序使用构建时写入的仓库根路径定位着色器和纹理，因此可以从任意工作目录启动。Windows 多配置生成器的运行命令见下方 Windows 小节。
 
 ### 场景冒烟测试
 
@@ -87,6 +93,52 @@ xmake run OpenGLLearn
 # 或先用 xmake 构建，再执行 xmake 输出目录中的程序：
 xmake run OpenGLLearn --smoke-test
 ```
+
+## 本地模型预览
+
+仓库在 `resources/models/` 按“一模型一文件夹”保留可直接打开的 Assimp 学习模型：`cube/` 用于查看几何导入，`textured-quad/` 用于查看外部贴图加载。模型的材质与贴图放在各自模型目录中，请勿拆开移动。点击主面板的 **Load local model...** 可打开本地模型，也可以使用这些仓库示例。也可以先选择 Model viewer，再点 **Open local model...**。macOS 使用 NSOpenPanel，Windows 使用原生文件对话框；取消选择不改变当前场景，导入失败会显示错误并保留旧模型。
+
+- 导入时处理节点变换、三角化和法线生成；模型自动居中并缩放至合适大小。
+- **W/A/S/D** 移动，**按住鼠标右键拖动**改变朝向，**滚轮**改变视野，**Reset view** 恢复初始视角。请在 ImGui 面板外操作，避免与控件交互冲突。
+- 支持基础材质颜色、外部及内嵌 diffuse/base-color 贴图，外部贴图相对模型目录解析。缺失或无法解码的贴图会给出警告，并回退到材质本色。
+- 如果贴图上下颠倒，可勾选 **Flip texture V**。OBJ 的 `.mtl` 及贴图、glTF 的 `.bin` 等关联文件应随模型保留。
+- 当前是静态模型预览，不播放骨骼动画，不实现完整 PBR、透明混合及法线/金属度贴图。图片解码受 stb_image 支持格式限制。
+- 模型加载同步完成，大型模型可能暂时阻塞界面。中文文件路径使用 UTF-8；ImGui 默认字体仍不含完整中文字形，路径文字可能显示为方块，不影响实际路径解析。
+
+现有冒烟入口也可指定示例或自己的模型，验证实际网格渲染（未增加独立测试目标）：
+
+```bash
+./build/cmake/OpenGLLearn --smoke-test --model "resources/models/cube/cube.obj"
+xmake run OpenGLLearn --smoke-test --model "resources/models/textured-quad/quad.obj"
+```
+
+## Assimp 模型导入库
+
+已集成 **Assimp 5.4.3**：CMake 和 xmake 使用同一份 `third_party/assimp` 源码及 `cmake/AssimpOptions.cmake` 配置。Assimp、内置 zlib 均静态链接，Windows 无需额外拷贝 Assimp/zlib DLL；MSVC 运行库保持 Debug `/MDd`、Release `/MD` 一致（运行机器仍需相应 Visual C++ 运行库）。
+
+- 默认开启上游导入器集合，包含 OBJ、FBX、glTF/GLB 等；不启用 USD、Draco 压缩扩展和模型导出功能。
+- xmake 的 Assimp 产物位于 `build/xmake-assimp/<平台>/<架构>/<模式>/`，不与主 CMake 构建混用。
+- 模型预览场景使用 `engine/src/ModelScene.cpp` 与 `resources/shaders/model/`，通过 Assimp 导入静态模型并绘制基础颜色/漫反射贴图。
+- `Assimp::Importer` 拥有 `ReadFile()` 返回的 `aiScene`；Importer 析构或再次导入后指针失效，渲染层须提前复制需要的顶点/索引/材质数据。
+- 版本、上游提交和许可证说明见 `third_party/assimp/INTEGRATION.md`。
+
+### Windows（Visual Studio 2019/2022 MSVC）
+
+安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载、Windows SDK 和 CMake ≥ 3.22，以下命令使用 x64 架构。Windows xmake 配置使用 MSVC，不支持混用 MinGW 编译出的库。
+
+```powershell
+# CMake 多配置生成器：运行路径中的配置要与 --config 保持一致
+cmake -S . -B build/cmake-vs -G "Visual Studio 17 2022" -A x64
+cmake --build build/cmake-vs --config Release --parallel 4
+.\build\cmake-vs\Release\OpenGLLearn.exe
+
+# xmake（Debug 时改为 -m debug）
+xmake f -p windows -a x64 -m release --toolchain=msvc --vs=2022
+xmake
+xmake run OpenGLLearn
+```
+
+VS 2019 对应 CMake 生成器 `Visual Studio 16 2019` 和 xmake `--vs=2019`。首次编译 Assimp 的时间和磁盘开销较大，后续增量构建会复用产物。
 
 ## 添加教程场景
 
@@ -100,4 +152,4 @@ xmake run OpenGLLearn --smoke-test
 
 ## 开发验证范围
 
-当前统一程序已在 macOS Apple Silicon 上通过 CMake、xmake 构建及全部场景的三轮 OpenGL 冒烟测试。根目录 xmake 配置目前支持 macOS 和 Windows；其他平台的 GLFW 系统依赖尚未在本项目验证。
+当前在 macOS Apple Silicon 上验证 CMake、xmake 构建、全部场景的三轮 OpenGL 冒烟测试。Windows 已配置 MSVC 架构、CRT 与静态库链接，但尚未在 Windows 实机验证；不能将跨平台构建配置视为已经通过 Windows 测试。其他平台的 GLFW 系统依赖尚未在本项目验证。
