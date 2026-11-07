@@ -14,8 +14,8 @@
 namespace {
 // 场景列表的顺序同时是 ImGui 选项的索引，新增场景时须同步注册工厂。
 const std::vector<SceneInfo> sceneInfos = {
-    {"No scene"}, {"Triangle"}, {"Uniform rectangle"}, {"Transformations"},
-    {"Texture"}, {"Phong lighting + materials"}, {"Model viewer"}
+    {"No scene"}, {"Model viewer"}, {"Triangle"}, {"Uniform rectangle"}, {"Texture"},
+    {"Transform+Face culling"}, {"Phong lighting + materials"}, {"Depth testing"}, {"Stencil testing"}
 };
 
 // 网格对象独占 VAO/VBO/EBO，析构时释放 GPU 资源；不可复制以避免重复释放。
@@ -297,6 +297,18 @@ public:
     }
     void render(const SceneFrame& frame) override {
         glEnable(GL_DEPTH_TEST);
+        // 面剔除是 OpenGL 上下文状态，不属于 VAO。保存并在绘制结束后恢复，
+        // 避免 GL_FRONT_AND_BACK 把其他场景（或后续绘制）也一并剔除。
+        const GLboolean previousCullEnabled = glIsEnabled(GL_CULL_FACE);
+        GLint previousCullFace = GL_BACK, previousFrontFace = GL_CCW;
+        glGetIntegerv(GL_CULL_FACE_MODE, &previousCullFace);
+        glGetIntegerv(GL_FRONT_FACE, &previousFrontFace);
+        const GLenum modes[] = {GL_BACK, GL_FRONT, GL_FRONT_AND_BACK};
+        // 立方体各面的顶点从外部看按逆时针排列；正反面由绕序决定，而不是顶点法线。
+        glFrontFace(GL_CCW);
+        glCullFace(modes[cullMode_]);
+        if (cullEnabled_) glEnable(GL_CULL_FACE);
+        else glDisable(GL_CULL_FACE);
         shader_->use();
         shader_->setMat4("projection", projection(frame));
         shader_->setMat4("view", camera_.GetViewMatrix());
@@ -314,16 +326,259 @@ public:
             shader_->setMat4("model", model);
             mesh_.draw();
         }
+        glCullFace(static_cast<GLenum>(previousCullFace));
+        glFrontFace(static_cast<GLenum>(previousFrontFace));
+        if (previousCullEnabled) glEnable(GL_CULL_FACE);
+        else glDisable(GL_CULL_FACE);
     }
     void drawControls() override {
-        // 3D 变换场景同样复用逐纹理采样面板，无需维护另一套环绕/过滤逻辑。
-        container_.drawControls("Container (texture0)");
-        face_.drawControls("Awesomeface (texture1)");
+        ImGui::Checkbox("Enable face culling", &cullEnabled_);
+        if (cullEnabled_) {
+            // GL_BACK：只剔除背向面（glCullFace 的默认选项）。
+            // GL_FRONT：只剔除正向面，可观察闭合模型的内部表面。
+            // GL_FRONT_AND_BACK：剔除所有正反向三角形，立方体将完全不可见；UI 不受影响。
+            const char* modes[] = {"GL_BACK", "GL_FRONT", "GL_FRONT_AND_BACK"};
+            ImGui::Combo("Cull face", &cullMode_, modes, IM_ARRAYSIZE(modes));
+            if (cullMode_ == 2) ImGui::TextWrapped("All triangle faces are culled; cubes are intentionally invisible.");
+        }
     }
 private:
     std::unique_ptr<Shader> shader_;
     Mesh mesh_;
     Texture container_, face_;
+    bool cullEnabled_ = false;
+    int cullMode_ = 0; // 默认剔除背面；未勾选启用时不进行剔除。
+};
+
+// 参照 LearnOpenGL：两个大理石箱子放在金属地面上，演示深度缓冲如何决定遮挡。
+class DepthTestingScene final : public CameraScene {
+public:
+    explicit DepthTestingScene(const std::string& root)
+        : shader_(loadShader(root, "depth-testing", "scene")),
+          card_(std::vector<float>{-1,-1,0,0,0, 1,-1,0,1,0, 1,1,0,1,1, -1,1,0,0,1}, {3,2}, {0,1,2,0,2,3}),
+          cube_(cubeVertices(false), {3,2}),
+          floor_(std::vector<float>{
+              // 地面 y=-0.5，与边长 1 的箱子底部对齐；UV 0..2 使金属纹理重复。
+               5,-.5f, 5, 2,0,  -5,-.5f, 5, 0,0,  -5,-.5f,-5, 0,2,
+               5,-.5f, 5, 2,0,  -5,-.5f,-5, 0,2,   5,-.5f,-5, 2,2
+          }, {3,2}),
+          marble_(root + "/resources/textures/marble.jpg"),
+          metal_(root + "/resources/textures/metal.png") {
+        shader_->use();
+        shader_->setInt("surfaceTexture", 0);
+    }
+    void render(const SceneFrame& frame) override {
+        // 深度比较和写入是上下文状态，保存/恢复，不能泄露到下一帧清屏和其他场景。
+        DepthState previous;
+        glDepthFunc(depthFunctions_[depthFunction_]);
+        glDepthMask(writeDepth_ ? GL_TRUE : GL_FALSE);
+        if (testDepth_) glEnable(GL_DEPTH_TEST);
+        else glDisable(GL_DEPTH_TEST);
+        shader_->use();
+        shader_->setMat4("view", camera_.GetViewMatrix());
+        shader_->setMat4("projection", glm::perspective(glm::radians(camera_.Zoom), frame.aspect, nearPlane_, farPlane_));
+        shader_->setFloat("nearPlane", nearPlane_);
+        shader_->setFloat("farPlane", farPlane_);
+        shader_->setInt("displayMode", displayMode_);
+        shader_->setInt("solidColor", false);
+        // Optional reference geometry shares the scene camera and projection.
+        marble_.bind(0); // Keep the sampler complete even during solid-color reference draws.
+        if (referenceDepth_) drawCards(true);
+        if (floorFirst_) drawFloor();
+        drawCubes();
+        if (!floorFirst_) drawFloor();
+        drawCards(false);
+    }
+    void drawControls() override {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Depth buffer settings");
+        ImGui::Checkbox("Gray card depth reference", &referenceDepth_);
+        ImGui::Checkbox("Reverse colored card order", &reverseCards_);
+        ImGui::TextWrapped("Cards stand among the boxes: orange is in front of its gray reference, green repeats the exact reference geometry, blue is behind it. All use the scene camera and projection.");
+        ImGui::TextWrapped("Gray references are drawn first with LESS and their own depth writes. Turn them off to test only the normal scene depth settings.");
+        ImGui::Checkbox("Enable depth test", &testDepth_);
+        // GL_LESS 是默认规则：新片元深度小于已存深度才通过；GL_ALWAYS 无条件通过。
+        // EQUAL/NOTEQUAL 比较缓冲中的精确深度，浮点误差和量化会影响相等测试。
+        // GEQUAL/GREATER 不能单独构成反向 Z：本场景仍采用常规投影、深度清除值 1。
+        const char* functions[] = {"GL_LESS", "GL_LEQUAL", "GL_EQUAL", "GL_NOTEQUAL",
+                                  "GL_GREATER", "GL_GEQUAL", "GL_ALWAYS", "GL_NEVER"};
+        if (testDepth_) ImGui::Combo("Depth function", &depthFunction_, functions, IM_ARRAYSIZE(functions));
+        ImGui::Checkbox("Write depth buffer", &writeDepth_);
+        ImGui::Checkbox("Draw floor first", &floorFirst_);
+        const char* explanations[] = {
+            "incoming < stored: closer fragments pass; equal fragments fail.",
+            "incoming <= stored: closer AND equal fragments pass.",
+            "incoming == stored: only exactly equal depth passes.",
+            "incoming != stored: equal depth fails; closer and farther pass.",
+            "incoming > stored: farther fragments pass.",
+            "incoming >= stored: farther AND equal fragments pass.",
+            "Always pass. Depth is still written if testing and writing are enabled.",
+            "Never pass. Neither color nor depth is written."
+        };
+        ImGui::TextWrapped("%s", explanations[depthFunction_]);
+        ImGui::TextWrapped("Writing OFF keeps the stored depth unchanged, but fragments still compare against it. Gray references, when enabled, write depth independently before the scene.");
+        const char* modes[] = {"Textured", "Raw depth (non-linear)", "Linear depth / far plane"};
+        ImGui::Combo("Display", &displayMode_, modes, IM_ARRAYSIZE(modes));
+        // 保证 0 < near < far，不能生成奇异透视矩阵或在线性化公式中除零。
+        {
+            ImGui::SliderFloat("Near plane", &nearPlane_, .01f, 2.f, "%.2f");
+            ImGui::SliderFloat("Far plane", &farPlane_, 3.f, 100.f, "%.1f");
+        }
+        if (ImGui::Button("Reset depth settings")) {
+            testDepth_ = writeDepth_ = true;
+            floorFirst_ = false;
+            depthFunction_ = displayMode_ = 0;
+            nearPlane_ = .1f; farPlane_ = 100.f;
+            referenceDepth_ = true; reverseCards_ = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset camera")) camera_ = Camera(glm::vec3(0,0,3));
+        ImGui::TextWrapped("Depth clear value: 1.0. Disable testing or writing, then change draw order to compare occlusion.");
+        if (!testDepth_) ImGui::TextWrapped("Depth writes also stop when GL_DEPTH_TEST is disabled, even if the write checkbox is on.");
+        if (!referenceDepth_ && testDepth_ && (depthFunction_ == 2 || depthFunction_ == 4 || depthFunction_ == 5 || depthFunction_ == 7))
+            ImGui::TextWrapped("With depth cleared to 1.0, this function may reject every fragment. A blank scene can be expected.");
+        if (displayMode_ == 1) ImGui::TextWrapped("Raw perspective depth is usually almost white. Compare linear depth or adjust near/far planes.");
+    }
+private:
+    // RAII 保证异常退出 render() 时也恢复写入掩码，避免下一帧 glClear 无法清深度。
+    struct DepthState {
+        GLboolean enabled = glIsEnabled(GL_DEPTH_TEST), mask = GL_TRUE;
+        GLint function = GL_LESS;
+        DepthState() {
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+            glGetIntegerv(GL_DEPTH_FUNC, &function);
+        }
+        ~DepthState() {
+            glDepthMask(mask);
+            glDepthFunc(static_cast<GLenum>(function));
+            if (enabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        }
+    };
+    // Green replays the identical model and vertex data, so EQUAL compares the
+    // same rasterized depth rather than merely approximately coplanar surfaces.
+    void drawCards(bool reference) {
+        shader_->setInt("solidColor", true);
+        if (reference) {
+            glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(GL_TRUE);
+        }
+        const glm::vec3 colors[] = {{1,.35f,.08f},{.1f,.9f,.3f},{.1f,.45f,1}};
+        for (int n=0; n<3; ++n) {
+            int i = !reference && reverseCards_ ? 2-n : n;
+            float z = -1.5f + (reference ? 0.f : (.3f - i*.3f));
+            auto model = glm::translate(glm::mat4(1), glm::vec3(.2f+i*.6f,.55f,z));
+            shader_->setMat4("model", glm::scale(model, glm::vec3(.43f,.65f,1)));
+            shader_->setVec3("color", reference ? glm::vec3(.28f) : colors[i]);
+            card_.draw();
+        }
+        shader_->setInt("solidColor", false);
+        if (reference) {
+            glDepthFunc(depthFunctions_[depthFunction_]);
+            glDepthMask(writeDepth_ ? GL_TRUE : GL_FALSE);
+            if (!testDepth_) glDisable(GL_DEPTH_TEST);
+        }
+    }
+    void drawFloor() {
+        metal_.bind(0);
+        shader_->setMat4("model", glm::mat4(1));
+        floor_.draw();
+    }
+    void drawCubes() {
+        marble_.bind(0);
+        shader_->setMat4("model", glm::translate(glm::mat4(1), glm::vec3(-1,0,-1)));
+        cube_.draw();
+        shader_->setMat4("model", glm::translate(glm::mat4(1), glm::vec3(2,0,0)));
+        cube_.draw();
+    }
+    inline static constexpr GLenum depthFunctions_[] = {
+        GL_LESS, GL_LEQUAL, GL_EQUAL, GL_NOTEQUAL, GL_GREATER, GL_GEQUAL, GL_ALWAYS, GL_NEVER
+    };
+    std::unique_ptr<Shader> shader_;
+    Mesh card_;
+    bool referenceDepth_ = true, reverseCards_ = false;
+    Mesh cube_, floor_;
+    Texture marble_, metal_;
+    bool testDepth_ = true, writeDepth_ = true, floorFirst_ = false;
+    int depthFunction_ = 0, displayMode_ = 0;
+    float nearPlane_ = .1f, farPlane_ = 100.f;
+};
+
+// Two passes: write visible object pixels as 1, then draw an enlarged shell outside 1.
+class StencilTestingScene final : public CameraScene {
+public:
+    explicit StencilTestingScene(const std::string& root)
+        : shader_(loadShader(root, "buffer-lab", "scene")), cube_(cubeVertices(false), {3,2}) {}
+    void render(const SceneFrame& frame) override {
+        // Save every state modified below, including clear value and write masks.
+        GLboolean depth = glIsEnabled(GL_DEPTH_TEST), stencil = glIsEnabled(GL_STENCIL_TEST), mask;
+        GLint depthFunc, func, ref, valueMask, writeMask, fail, zfail, pass, clear;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+        glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+        glGetIntegerv(GL_STENCIL_FUNC, &func); glGetIntegerv(GL_STENCIL_REF, &ref);
+        glGetIntegerv(GL_STENCIL_VALUE_MASK, &valueMask); glGetIntegerv(GL_STENCIL_WRITEMASK, &writeMask);
+        glGetIntegerv(GL_STENCIL_FAIL, &fail); glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &zfail);
+        glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &pass); glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &clear);
+        glStencilMask(0xff); glClearStencil(0); glClear(GL_STENCIL_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(GL_TRUE);
+        glEnable(GL_STENCIL_TEST);
+        shader_->use();
+        shader_->setMat4("view", camera_.GetViewMatrix());
+        shader_->setMat4("projection", projection(frame));
+        // Offset to the right leaves room for the control panel.
+        auto draw = [&](float scale, glm::vec3 color) {
+            shader_->setVec3("color", color);
+            for (auto position : {glm::vec3(.3f,0,0), glm::vec3(1.1f,.15f,-1.2f)}) {
+                auto model = glm::translate(glm::mat4(1), position);
+                model = glm::rotate(model, glm::radians(25.f), glm::vec3(0,1,0));
+                shader_->setMat4("model", glm::scale(model, glm::vec3(scale)));
+                cube_.draw();
+            }
+        };
+        glStencilFunc(GL_ALWAYS, 1, 0xff);
+        glStencilMask(writeStencil_ ? 0xff : 0x00);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        draw(1, stage_ == 1 ? glm::vec3(1) : glm::vec3(.12f,.5f,.85f));
+        if (stage_ != 1) {
+            glStencilMask(0); // second pass must not alter the reference mask
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+            const GLenum functions[] = {GL_NOTEQUAL, GL_EQUAL, GL_ALWAYS, GL_NEVER};
+            glStencilFunc(functions[function_], reference_, compareMask_);
+            if (!testStencil_) glDisable(GL_STENCIL_TEST);
+            if (!outlineDepth_) glDisable(GL_DEPTH_TEST);
+            draw(1.f + thickness_, glm::vec3(1,.65f,.05f));
+        }
+        glStencilMask(writeMask); glClearStencil(clear);
+        glStencilFunc(func, ref, valueMask); glStencilOp(fail,zfail,pass);
+        if (stencil) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
+        glDepthMask(mask); glDepthFunc(depthFunc);
+        if (depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    }
+    void drawControls() override {
+        ImGui::TextWrapped("1. Clear stencil to 0. 2. Blue objects write 1 on depth pass. 3. Enlarged yellow objects draw where stencil != 1.");
+        const char* stages[] = {"Final outline", "Mask preview (white = 1)"};
+        ImGui::Combo("Stage", &stage_, stages, 2);
+        ImGui::Checkbox("Write stencil in object pass", &writeStencil_);
+        ImGui::Checkbox("Stencil test in outline pass", &testStencil_);
+        const char* funcs[] = {"GL_NOTEQUAL", "GL_EQUAL", "GL_ALWAYS", "GL_NEVER"};
+        ImGui::Combo("Outline stencil function", &function_, funcs, 4);
+        ImGui::SliderInt("Reference", &reference_, 0, 1);
+        ImGui::SliderInt("Compare bit mask", &compareMask_, 0, 255);
+        ImGui::SliderFloat("Outline thickness", &thickness_, .01f, .3f);
+        ImGui::Checkbox("Depth test for outline", &outlineDepth_);
+        ImGui::TextWrapped("Comparison uses (reference & mask) and (stored & mask). Mask 0 makes them equal everywhere. Write mask controls which bits can change; it does not control comparison.");
+        ImGui::TextWrapped("glStencilOp(sfail, dpfail, dppass): KEEP, KEEP, REPLACE here. Only fragments passing both tests write reference 1. Outline uses KEEP for all outcomes.");
+        ImGui::TextWrapped("Try EQUAL to paint the interior; ALWAYS or disabling stencil fills the enlarged silhouette. Disable writes: NOTEQUAL passes everywhere. Outline depth OFF keeps the shell visible through other objects.");
+        if (ImGui::Button("Reset stencil settings")) {
+            stage_=function_=0; reference_=1; compareMask_=255;
+            writeStencil_=testStencil_=true; outlineDepth_=false; thickness_=.08f;
+            camera_=Camera(glm::vec3(0,0,3));
+        }
+    }
+private:
+    std::unique_ptr<Shader> shader_;
+    Mesh cube_;
+    bool writeStencil_=true, testStencil_=true, outlineDepth_=false;
+    int stage_=0, function_=0, reference_=1, compareMask_=255;
+    float thickness_=.08f;
 };
 
 // Phong 光照与材质合并为一个可交互场景，避免固定参数的重复光照演示。
@@ -408,12 +663,14 @@ std::unique_ptr<Scene> createScene(int index, const std::string& root) {
     // 索引 0 为清屏场景；其余选项为教程示例与本地模型预览。
     switch (index) {
         case 0: return std::make_unique<EmptyScene>();
-        case 1: return std::make_unique<TriangleScene>(root, false);
-        case 2: return std::make_unique<TriangleScene>(root, true);
-        case 3: return std::make_unique<TransformScene>(root);
+        case 1: return createModelScene(root);
+        case 2: return std::make_unique<TriangleScene>(root, false);
+        case 3: return std::make_unique<TriangleScene>(root, true);
         case 4: return std::make_unique<TextureScene>(root);
-        case 5: return std::make_unique<LightingScene>(root);
-        case 6: return createModelScene(root);
+        case 5: return std::make_unique<TransformScene>(root);
+        case 6: return std::make_unique<LightingScene>(root);
+        case 7: return std::make_unique<DepthTestingScene>(root);
+        case 8: return std::make_unique<StencilTestingScene>(root);
         default: throw std::out_of_range("Invalid scene index");
     }
 }

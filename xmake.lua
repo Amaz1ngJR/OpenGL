@@ -1,6 +1,8 @@
 set_project("OpenGLLearn")
 set_languages("c99", "cxx17")
 add_rules("mode.debug", "mode.release")
+-- Assimp 的 CMake 配置会生成主程序编译所需的 config.h。
+set_policy("build.across_targets_in_parallel", false)
 
 -- 第三方依赖均来自仓库；Assimp 静态库用与主程序相同的 CMake/编译器配置构建。
 local root = os.scriptdir()
@@ -52,10 +54,12 @@ target("assimp_build")
     set_kind("phony")
     set_default(false)
     set_group("third_party")
-    on_load(function (target)
+    on_config(function (target)
         import("core.project.config")
         local mode = config.mode() or "release"
-        local build_dir = path.join(os.projectdir(), "build/xmake-assimp", target:plat(), target:arch(), mode)
+        local abi = target:has_tool("cxx", "gxx") and "mingw" or "msvc"
+        local build_dir = path.join(os.projectdir(), "build/xmake-assimp", target:plat(), target:arch(),
+                                   target:is_plat("windows") and abi or "native", mode)
         target:data_set("assimp_build_dir", build_dir)
         target:add("includedirs", path.join(os.projectdir(), "third_party/assimp/include"),
                    path.join(build_dir, "assimp/include"), {public = true})
@@ -70,7 +74,16 @@ target("assimp_build")
         local build_dir = target:data("assimp_build_dir")
         local args = {"-S", path.join(os.projectdir(), "cmake/AssimpForXmake"), "-B", build_dir,
                       "-DCMAKE_BUILD_TYPE=" .. mode}
-        if target:is_plat("windows") then
+        if target:is_plat("windows") and target:has_tool("cxx", "gxx") then
+            -- 显式使用 xmake 选中的编译器，避免 CMake 从 PATH 选到另一套 ABI。
+            local cc = assert(find_tool(target:tool("cc")), "MinGW C compiler not found").program
+            local cxx = assert(find_tool(target:tool("cxx")), "MinGW C++ compiler not found").program
+            if not cc:endswith(".exe") then cc = cc .. ".exe" end
+            if not cxx:endswith(".exe") then cxx = cxx .. ".exe" end
+            local ninja = assert(find_tool("ninja"), "MinGW Assimp build requires Ninja in PATH")
+            table.join2(args, {"-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" .. ninja.program,
+                              "-DCMAKE_C_COMPILER=" .. cc, "-DCMAKE_CXX_COMPILER=" .. cxx})
+        elseif target:is_plat("windows") then
             -- 不混用 MinGW ABI；用 VS 环境中检测到的版本，而不是写死当前默认版本。
             local msvc = target:toolchain("msvc")
             assert(msvc, "Windows Assimp build requires the MSVC toolchain")

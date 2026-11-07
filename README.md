@@ -37,14 +37,63 @@
 
 启动时只显示一个窗口和 ImGui 控制面板，不绘制场景。面板中可单选：
 
-1. **Triangle**：顶点颜色渐变三角形。
-2. **Uniform rectangle**：通过 uniform 随时间变化颜色的矩形。
-3. **Transformations**：纹理立方体阵列、模型变换和相机。
+1. **Model viewer**：通过原生文件对话框选择本地模型，显示基础材质和贴图，并使用键鼠调整视角。
+2. **Triangle**：顶点颜色渐变三角形。
+3. **Uniform rectangle**：通过 uniform 随时间变化颜色的矩形。
 4. **Texture**：在同一个场景中切换单纹理/双纹理混合，并实时调整混合比例、UV 缩放、环绕方式和过滤方式。
-5. **Phong lighting + materials**：在同一个场景中观察 Phong 环境光、漫反射、镜面反射，并实时调节光源轨迹、光源颜色和中心物体材质。
-6. **Model viewer**：通过原生文件对话框选择本地模型，显示基础材质和贴图，并使用键鼠调整视角。
+5. **Transform+Face culling**：纹理立方体阵列、模型变换、相机和可调面剔除；纹理调参集中在 Texture 场景。
+6. **Phong lighting + materials**：在同一个场景中观察 Phong 环境光、漫反射、镜面反射，并实时调节光源轨迹、光源颜色和中心物体材质。
+7. **Depth testing**：大理石箱子、金属地面和彩色测试平面组成的统一 3D 场景。
+8. **Stencil testing**：分步查看模板遮罩与物体描边，比较模板函数、参考值和位掩码。
 
 场景按需创建。切换时先创建新场景，创建成功后再销毁旧场景；场景独占的 shader、纹理和网格对象会随场景析构释放。3D 场景支持 **WASD** 移动、按住鼠标右键拖动视角、滚轮缩放；**ESC** 退出。ImGui 标签使用英文，避免默认字体缺少中文字形。
+
+## Transform+Face culling 面剔除
+
+`Enable face culling` 默认关闭；开启后通过 `Cull face` 选择：
+
+- `GL_BACK`：只剔除背向面。
+- `GL_FRONT`：只剔除正向面，可以观察闭合物体的内部表面。
+- `GL_FRONT_AND_BACK`：同时剔除正反向三角形，立方体会完全不可见，这是预期效果。
+
+正反面由投影到屏幕后的顶点绕序决定，与顶点法线无关；本场景使用 `glFrontFace(GL_CCW)`，即逆时针为正面。绘制结束会恢复先前的面剔除状态，不影响 ImGui 或其他场景。
+
+## Depth testing 深度测试
+
+深度测试只有一个 3D 场景：大理石箱子、金属地面，以及立在箱子之间的彩色平面。所有物体共用相机、透视投影和深度缓冲，WASD、右键拖动和滚轮均会影响它们。
+
+默认开启 `Gray card depth reference`：先用 LESS 和独立深度写入绘制三张灰色参考平面，再使用面板中选择的深度参数绘制箱子、地面和彩色平面。橙色在参考平面前方，绿色重复参考平面的完全相同几何及变换，蓝色位于参考平面后方。这里的深度由真实投影产生，不再固定为屏幕深度值。
+
+保持默认视角及其他参数，依次尝试：
+
+- `LESS`：橙色通过，等深度的绿色与更远的蓝色被参考平面挡住。
+- `LEQUAL`：绿色也能通过；`EQUAL` 可以单独观察绿色的等深度重绘。
+- `GREATER` / `GEQUAL`：蓝色可在灰色参考区域内通过；其他未写入深度的位置仍为清除值 1，通常无法通过。
+- `NOTEQUAL`：绿色因深度相同被拒绝；橙色和蓝色可通过，重叠处受前面绘制的几何影响。
+- `ALWAYS`：后绘制覆盖前绘制；`NEVER`：正常场景绘制全部失败，只剩独立绘制的灰色参考平面。
+- 关闭参考平面后，用 LESS 切换 `Write depth buffer`、`Draw floor first` 和 `Reverse colored card order`，比较深度写入及绘制顺序造成的遮挡变化。
+- 关闭 `Enable depth test`，正常场景按绘制顺序覆盖，同时停止深度写入；独立参考平面仍按其固定规则绘制。
+
+参考平面可随时关闭，此时全部场景几何只使用面板选择的深度规则。EQUAL 在没有预先写入相同几何深度时可能全空；GREATER 配合默认清除值 1 也可能全空，并非渲染故障。相机移动或裁剪面变化会改变实际遮挡，以上结果以默认视角为准。
+
+`Display` 可切换纹理/彩色、原始非线性深度、线性深度 / 远平面，箱子、地面和测试平面统一生效。`Near plane` / `Far plane` 调整透视裁剪范围；原始深度接近白色是正常现象。深度清除值保持 1，绘制后恢复深度状态。`Reset depth settings` 恢复参数，`Reset camera` 恢复相机。
+
+## Stencil testing 模板测试
+
+新增 **Stencil testing** 场景，窗口请求 8 位模板缓冲，两个蓝色立方体具有黄色描边，支持 WASD、右键和滚轮。
+
+1. 清除模板为 0。
+2. 正常绘制蓝色物体：`glStencilFunc(GL_ALWAYS, 1, 0xff)`，`glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)`。模板失败、深度失败时保留原值，两者都通过时把模板写为 1。
+3. 放大物体绘制黄色外壳：关闭模板写入，用 `GL_NOTEQUAL` 与参考值 1 比较，只保留物体以外的轮廓。描边默认关闭深度测试。
+
+`Stage` 的白色预览显示第一遍物体写入 1 的区域（几何覆盖预览，并非读取模板纹理）。关闭模板写入后，此预览仍显示物体，但实际模板保持 0；通过最终描边观察区别。
+
+- 改 `Outline stencil function` 为 EQUAL：黄色填入原物体内部；ALWAYS 或关闭模板测试：黄色填满放大的轮廓；NEVER：不画黄色。
+- 关闭 `Write stencil in object pass`：模板保持 0，默认 NOTEQUAL 在整个外壳上通过。
+- `Reference` 是第二遍比较的参考值。`Compare bit mask` 对参考值和已存值分别按位与；设为 0 后两边永远相等，NOTEQUAL 全部失败。
+- 模板写入掩码决定哪些位允许修改，比较掩码决定哪些位参与判断；两者用途不同。
+- `Outline thickness` 控制模型放大比例，并非固定屏幕像素宽度。`Depth test for outline` 可观察其他几何对外壳的深度遮挡。
+- `Reset stencil settings` 恢复默认参数及相机。每帧清空模板，并恢复深度和模板状态，切换场景不会残留遮罩。
 
 ## 纹理参数面板
 
@@ -117,14 +166,14 @@ xmake run OpenGLLearn --smoke-test --model "resources/models/textured-quad/quad.
 已集成 **Assimp 5.4.3**：CMake 和 xmake 使用同一份 `third_party/assimp` 源码及 `cmake/AssimpOptions.cmake` 配置。Assimp、内置 zlib 均静态链接，Windows 无需额外拷贝 Assimp/zlib DLL；MSVC 运行库保持 Debug `/MDd`、Release `/MD` 一致（运行机器仍需相应 Visual C++ 运行库）。
 
 - 默认开启上游导入器集合，包含 OBJ、FBX、glTF/GLB 等；不启用 USD、Draco 压缩扩展和模型导出功能。
-- xmake 的 Assimp 产物位于 `build/xmake-assimp/<平台>/<架构>/<模式>/`，不与主 CMake 构建混用。
+- xmake 的 Assimp 产物位于 `build/xmake-assimp/<平台>/<架构>/<工具链>/<模式>/`，区分 MinGW/MSVC，不与主 CMake 构建混用。
 - 模型预览场景使用 `engine/src/ModelScene.cpp` 与 `resources/shaders/model/`，通过 Assimp 导入静态模型并绘制基础颜色/漫反射贴图。
 - `Assimp::Importer` 拥有 `ReadFile()` 返回的 `aiScene`；Importer 析构或再次导入后指针失效，渲染层须提前复制需要的顶点/索引/材质数据。
 - 版本、上游提交和许可证说明见 `third_party/assimp/INTEGRATION.md`。
 
 ### Windows（Visual Studio 2019/2022 MSVC）
 
-安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载、Windows SDK 和 CMake ≥ 3.22，以下命令使用 x64 架构。Windows xmake 配置使用 MSVC，不支持混用 MinGW 编译出的库。
+安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载、Windows SDK 和 CMake ≥ 3.22，以下命令使用 x64 架构。主程序和 Assimp 须使用同一工具链，不能混用 MinGW/MSVC 库。
 
 ```powershell
 # CMake 多配置生成器：运行路径中的配置要与 --config 保持一致
@@ -139,6 +188,24 @@ xmake run OpenGLLearn
 ```
 
 VS 2019 对应 CMake 生成器 `Visual Studio 16 2019` 和 xmake `--vs=2019`。首次编译 Assimp 的时间和磁盘开销较大，后续增量构建会复用产物。
+
+### Windows（MSYS2 MinGW64）
+
+将 `C:\msys64\mingw64\bin` 和 xmake 加入 PATH，确认其中有 GCC、G++、CMake ≥ 3.22 和 Ninja。两套构建均从源码编译 Assimp，使用相同的 MinGW 工具链。
+
+```powershell
+# CMake；Debug 将两处 mingw-release 改为 mingw-debug
+cmake --preset mingw-release
+cmake --build --preset mingw-release
+.\build\cmake-mingw-release\OpenGLLearn.exe
+
+# xmake
+xmake f -p windows -a x64 -m release --toolchain=mingw --mingw=C:\msys64\mingw64
+xmake
+xmake run OpenGLLearn
+```
+
+在本项目目录运行 `..\FluxPlayer\setup_env.ps1` 会配置当前项目使用 MinGW；随后可直接执行 `xmake`。切换工具链应重新运行 `xmake f`，CMake 应使用独立构建目录。
 
 ## 添加教程场景
 

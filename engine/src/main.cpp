@@ -70,7 +70,7 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
     std::vector<unsigned char> pixels(static_cast<size_t>(width) * height * 4);
     for (int round = 0; round < 3; ++round) {
         for (int index = 0; index < static_cast<int>(availableScenes().size()); ++index) {
-            auto scene = index == 6 && !modelPath.empty() ? createModelScene(root, modelPath) : createScene(index, root);
+            auto scene = index == 1 && !modelPath.empty() ? createModelScene(root, modelPath) : createScene(index, root);
             glViewport(0, 0, width, height);
             glClearColor(0, 0, 0, 1);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -80,10 +80,31 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
             for (size_t p = 0; p < pixels.size(); p += 4)
                 if (pixels[p] || pixels[p + 1] || pixels[p + 2]) ++colored;
             // 模型预览尚未选文件时与空场景一样仅清屏，不伪造默认模型。
-            const bool emptyScene = index == 0 || (index == 6 && modelPath.empty());
+            const bool emptyScene = index == 0 || (index == 1 && modelPath.empty());
             if ((emptyScene && colored != 0) || (!emptyScene && colored == 0))
                 throw std::runtime_error(std::string("Unexpected framebuffer: ") + availableScenes()[index].name);
-            if (index == 5) {
+            if (index == 7 || index == 8) {
+                // Check the teaching result, not only that some pixels were drawn.
+                size_t orange = 0, green = 0, blue = 0, yellow = 0;
+                for (size_t p = 0; p < pixels.size(); p += 4) {
+                    const int r = pixels[p], g = pixels[p+1], b = pixels[p+2];
+                    if (r > 240 && g > 70 && g < 110 && b < 40) ++orange;
+                    if (r < 50 && g > 210 && b < 110) ++green;
+                    if (r < 50 && g > 95 && g < 135 && b > 240) ++blue;
+                    if (r > 240 && g > 145 && g < 185 && b < 40) ++yellow;
+                }
+                if (index == 7 && (orange == 0 || green != 0 || blue != 0))
+                    throw std::runtime_error("LESS must show the closer orange card and reject equal/farther cards");
+                if (index == 8) {
+                    std::vector<unsigned char> stencilPixels(static_cast<size_t>(width) * height);
+                    glReadPixels(0, 0, width, height, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilPixels.data());
+                    size_t marked = 0;
+                    for (auto value : stencilPixels) if (value == 1) ++marked;
+                    if (yellow == 0 || marked == 0)
+                        throw std::runtime_error("Stencil outline or reference mask missing");
+                }
+            }
+            if (index == 6) {
                 // 先在 time=1 时绘制并记下光源矩阵与颜色。
                 scene->render({1.0f, .016f, static_cast<float>(width) / height});
                 GLint program = 0;
@@ -170,7 +191,7 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
                 const std::string path = selectModelFile();
                 if (!path.empty()) {
                     scene = createModelScene(root, path);
-                    selected = 6;
+                    selected = 1;
                     error.clear();
                     state.firstMouse = true;
                     state.mouseX = state.mouseY = state.scroll = 0;
@@ -260,6 +281,7 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_STENCIL_BITS, 8);
     if (smoke) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
