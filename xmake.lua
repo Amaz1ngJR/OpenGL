@@ -106,8 +106,9 @@ target("OpenGLLearn")
     set_kind("binary")
     set_default(true)
     add_deps("glfw_local", "glad_local", "assimp_build")
-    add_files("engine/src/main.cpp", "engine/src/Shader.cpp", "engine/src/Camera.cpp", "engine/src/Scenes.cpp",
+    add_files("engine/src/main.cpp", "engine/src/SmokeTest.cpp", "engine/src/Shader.cpp", "engine/src/Camera.cpp", "engine/src/Scenes.cpp",
               "engine/src/ModelScene.cpp", "engine/src/FileDialog.cpp")
+    add_files("engine/src/scenes/*.cpp")
     add_files(path.join(imgui, "imgui.cpp"), path.join(imgui, "imgui_draw.cpp"),
               path.join(imgui, "imgui_tables.cpp"), path.join(imgui, "imgui_widgets.cpp"),
               path.join(imgui, "backends/imgui_impl_glfw.cpp"),

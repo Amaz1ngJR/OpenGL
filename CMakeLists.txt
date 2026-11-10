@@ -31,9 +31,20 @@ target_include_directories(glad PUBLIC ${THIRD_PARTY_DIR}/glad/include)
 
 add_executable(OpenGLLearn
     engine/src/main.cpp
+    engine/src/SmokeTest.cpp
     engine/src/Shader.cpp
     engine/src/Camera.cpp
     engine/src/Scenes.cpp
+    engine/src/scenes/SceneSupport.cpp
+    engine/src/scenes/EmptyScene.cpp
+    engine/src/scenes/TriangleScene.cpp
+    engine/src/scenes/UniformRectangleScene.cpp
+    engine/src/scenes/TextureScene.cpp
+    engine/src/scenes/TransformScene.cpp
+    engine/src/scenes/DepthTestingScene.cpp
+    engine/src/scenes/StencilTestingScene.cpp
+    engine/src/scenes/BlendingScene.cpp
+    engine/src/scenes/LightingScene.cpp
     engine/src/ModelScene.cpp
     engine/src/FileDialog.cpp
     third_party/imgui/imgui.cpp

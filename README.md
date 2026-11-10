@@ -10,7 +10,9 @@
 │   ├── include/                 # 场景、着色器、相机接口
 │   └── src/
 │       ├── main.cpp             # 唯一窗口、ImGui 与主循环
-│       ├── Scenes.cpp           # 教程场景与场景工厂
+│       ├── SmokeTest.cpp        # 独立的场景冒烟测试与光源暂停/恢复验证
+│       ├── Scenes.cpp           # 场景列表与工厂分发
+│       ├── scenes/              # 每个教程场景独立文件及共用辅助代码
 │       ├── ModelScene.cpp       # Assimp 静态模型、材质纹理与预览相机
 │       ├── FileDialog.cpp       # Windows 原生模型选择器
 │       ├── FileDialogMac.mm     # macOS 原生模型选择器
@@ -31,7 +33,7 @@
 └── xmake.lua                    # xmake 构建配置
 ```
 
-`resources/shaders/` 延续教程分类，便于对照学习；场景的 C++ 渲染实现统一放在 `engine/`。窗口、GLFW 回调、ImGui 初始化和帧循环只有一份，各场景不再创建窗口或包含自己的 `main()`。
+`resources/shaders/` 延续教程分类，便于对照学习；教程场景的 C++ 渲染实现按场景拆分到 `engine/src/scenes/`；模型预览保留在独立的 `engine/src/ModelScene.cpp`。`Scenes.cpp` 只维护场景列表及工厂分发。窗口、GLFW 回调、ImGui 初始化和帧循环只有一份，各场景不再创建窗口或包含自己的 `main()`。
 
 ## 已实现的场景
 
@@ -45,6 +47,7 @@
 6. **Phong lighting + materials**：在同一个场景中观察 Phong 环境光、漫反射、镜面反射，并实时调节光源轨迹、光源颜色和中心物体材质。
 7. **Depth testing**：大理石箱子、金属地面和彩色测试平面组成的统一 3D 场景。
 8. **Stencil testing**：分步查看模板遮罩与物体描边，比较模板函数、参考值和位掩码。
+9. **Blending**：草丛透明片元丢弃、半透明窗户及可切换的距离排序。
 
 场景按需创建。切换时先创建新场景，创建成功后再销毁旧场景；场景独占的 shader、纹理和网格对象会随场景析构释放。3D 场景支持 **WASD** 移动、按住鼠标右键拖动视角、滚轮缩放；**ESC** 退出。ImGui 标签使用英文，避免默认字体缺少中文字形。
 
@@ -76,14 +79,14 @@
 
 参考平面可随时关闭，此时全部场景几何只使用面板选择的深度规则。EQUAL 在没有预先写入相同几何深度时可能全空；GREATER 配合默认清除值 1 也可能全空，并非渲染故障。相机移动或裁剪面变化会改变实际遮挡，以上结果以默认视角为准。
 
-`Display` 可切换纹理/彩色、原始非线性深度、线性深度 / 远平面，箱子、地面和测试平面统一生效。`Near plane` / `Far plane` 调整透视裁剪范围；原始深度接近白色是正常现象。深度清除值保持 1，绘制后恢复深度状态。`Reset depth settings` 恢复参数，`Reset camera` 恢复相机。
+`Display` 可切换纹理/彩色、线性深度 / 远平面，箱子、地面和测试平面统一生效。`Near plane` / `Far plane` 调整透视裁剪范围；线性深度显示的是沿观察轴的距离除以远平面，不会改写深度缓冲。深度清除值保持 1，绘制后恢复深度状态。`Reset depth settings` 恢复参数，`Reset camera` 恢复相机。
 
 ## Stencil testing 模板测试
 
-新增 **Stencil testing** 场景，窗口请求 8 位模板缓冲，两个蓝色立方体具有黄色描边，支持 WASD、右键和滚轮。
+新增 **Stencil testing** 场景，窗口请求 8 位模板缓冲，两个立方体使用 `resources/textures/container2.png`，具有纯黄色描边，支持 WASD、右键和滚轮。
 
 1. 清除模板为 0。
-2. 正常绘制蓝色物体：`glStencilFunc(GL_ALWAYS, 1, 0xff)`，`glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)`。模板失败、深度失败时保留原值，两者都通过时把模板写为 1。
+2. 正常绘制带贴图的立方体：`glStencilFunc(GL_ALWAYS, 1, 0xff)`，`glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)`。模板失败、深度失败时保留原值，两者都通过时把模板写为 1。
 3. 放大物体绘制黄色外壳：关闭模板写入，用 `GL_NOTEQUAL` 与参考值 1 比较，只保留物体以外的轮廓。描边默认关闭深度测试。
 
 `Stage` 的白色预览显示第一遍物体写入 1 的区域（几何覆盖预览，并非读取模板纹理）。关闭模板写入后，此预览仍显示物体，但实际模板保持 0；通过最终描边观察区别。
@@ -94,6 +97,22 @@
 - 模板写入掩码决定哪些位允许修改，比较掩码决定哪些位参与判断；两者用途不同。
 - `Outline thickness` 控制模型放大比例，并非固定屏幕像素宽度。`Depth test for outline` 可观察其他几何对外壳的深度遮挡。
 - `Reset stencil settings` 恢复默认参数及相机。每帧清空模板，并恢复深度和模板状态，切换场景不会残留遮罩。
+
+## Blending 混合
+
+新增 **Blending** 场景，参考 [LearnOpenGL Blending](https://learnopengl.com/Advanced-OpenGL/Blending)：两个大理石箱子、金属地面，以及教程位置的五扇半透明窗户。额外放置三片草丛，避免与窗户共面。所有物体使用同一相机，支持 WASD、右键拖动和滚轮。
+
+绘制依次执行：
+
+1. 关闭混合，绘制箱子和地面，启用深度测试和深度写入。
+2. 绘制 `grass.png`，默认丢弃 alpha < 0.1 的片元。留下的草叶正常写深度，透明区域不会遮挡后方物体。
+3. 每帧根据当前相机到窗户放置位置的距离排序，以从远到近的顺序绘制 `window.png`，使用 `GL_SRC_ALPHA` / `GL_ONE_MINUS_SRC_ALPHA` 混合。保持深度测试，默认关闭窗户深度写入。透明纹理使用 `GL_CLAMP_TO_EDGE`，避免重复采样的边缘颜色渗漏。
+
+`Window draw order` 支持 **Far to near**（默认）、**Near to far** 和 **Original placement order**，`Current window order` 展示实际顺序及距离。移动相机后排序实时更新，等距离窗户也不会被丢失。此处按物体距离排序与教程一致，并非逐像素排序；相交或复杂交叠的透明几何仍可能出现误差。
+
+建议对比：关闭窗户混合观察不透明色块；切换从近到远并开启 `Write window depth`，观察远窗被近窗挡掉；关闭深度写入后比较不同顺序的颜色叠加。草丛可切换 `Discard transparent grass pixels` 并调节阈值，观察不丢弃时透明区域形成矩形遮挡。草丛与窗户可以分别隐藏。
+
+所有混合函数、混合方程、深度和面剔除状态在绘制结束后恢复，不影响其他场景。
 
 ## 纹理参数面板
 
@@ -135,7 +154,7 @@ xmake run OpenGLLearn
 
 ### 场景冒烟测试
 
-冒烟测试使用隐藏 GLFW 窗口，轮流创建、绘制、销毁所有场景三轮，并检查 framebuffer 是否有预期输出及是否出现 OpenGL 错误：
+冒烟测试逻辑集中在 `engine/src/SmokeTest.cpp`，由 `engine/include/SmokeTest.h` 声明接口；`main.cpp` 只负责初始化上下文和调用测试。测试使用隐藏 GLFW 窗口，轮流创建、绘制、销毁所有场景三轮，并检查 framebuffer 是否有预期输出及是否出现 OpenGL 错误：
 
 ```bash
 ./build/cmake/OpenGLLearn --smoke-test
@@ -210,10 +229,10 @@ xmake run OpenGLLearn
 ## 添加教程场景
 
 1. 在 `resources/shaders/` 下按类别保存该场景的 `.vs` 和 `.fs` 文件。
-2. 在 `engine/src/Scenes.cpp` 中实现一个 `Scene` 派生类。场景构造函数创建所需 GPU 资源，`render()` 绘制场景，析构时释放资源。
-3. 在 `sceneInfos` 中增加面板名称，并在 `createScene()` 的工厂分支中返回场景实例；保持列表顺序与工厂索引一致。
+2. 在 `engine/src/scenes/<场景名>Scene.cpp` 中实现一个 `Scene` 派生类，并导出创建函数，在 `scenes/SceneFactories.h` 中声明。共用网格、纹理和相机辅助代码位于 `scenes/SceneSupport.h/.cpp`。场景构造函数创建所需 GPU 资源，`render()` 绘制场景，析构时释放资源。
+3. 在 `engine/src/Scenes.cpp` 的 `sceneInfos` 中增加面板名称，并在 `createScene()` 的工厂分支中调用该场景的创建函数；保持列表顺序与工厂索引一致。
 4. 若场景需要相机输入，继承 `CameraScene` 或实现 `usesCamera()` 与 `input()`。
-5. 使用 CMake 和 xmake 构建，并运行 `--smoke-test` 验证。
+5. 将新场景源文件加入 `CMakeLists.txt`（xmake 自动包含 `scenes/*.cpp`），使用 CMake 和 xmake 构建，并运行 `--smoke-test` 验证。
 
 `Mesh`、`Texture` 和 `Shader` 都遵循 RAII 管理 OpenGL 对象。销毁场景时必须仍有有效的 OpenGL 上下文，不能把 GPU 资源释放延迟到窗口销毁之后。
 
