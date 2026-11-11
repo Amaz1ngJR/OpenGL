@@ -11,3 +11,4 @@ std::unique_ptr<Scene> createDepthTestingScene(const std::string& root);
 std::unique_ptr<Scene> createStencilTestingScene(const std::string& root);
 std::unique_ptr<Scene> createBlendingScene(const std::string& root);
 std::unique_ptr<Scene> createLightingScene(const std::string& root);
+std::unique_ptr<Scene> createFramebufferScene(const std::string& root, int effect = 0);

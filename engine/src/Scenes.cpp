@@ -7,7 +7,7 @@ namespace {
 // Registration order is shared by the UI and smoke test.
 const std::vector<SceneInfo> sceneInfos = {
     {"No scene"}, {"Model viewer"}, {"Triangle"}, {"Uniform rectangle"}, {"Texture"},
-    {"Transform+Face culling"}, {"Phong lighting + materials"}, {"Depth testing"}, {"Stencil testing"}, {"Blending"}
+    {"Transform+Face culling"}, {"Phong lighting + materials"}, {"Depth testing"}, {"Stencil testing"}, {"Blending"}, {"Framebuffers"}
 };
 
 }
@@ -27,6 +27,7 @@ std::unique_ptr<Scene> createScene(int index, const std::string& root) {
         case 7: return createDepthTestingScene(root);
         case 8: return createStencilTestingScene(root);
         case 9: return createBlendingScene(root);
+        case 10: return createFramebufferScene(root);
         default: throw std::out_of_range("Invalid scene index");
     }
 }

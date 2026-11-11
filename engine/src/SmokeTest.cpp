@@ -1,6 +1,7 @@
 #include "SmokeTest.h"
 #include "Scene.h"
 #include "ModelScene.h"
+#include "scenes/SceneFactories.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -137,4 +138,36 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
             std::cout << "PASS " << round + 1 << ": " << availableScenes()[index].name << '\n';
         }
     }
+    // Exercise every post-process shader branch and attachment reallocation.
+    std::vector<unsigned char> original(160*90*4), output(original.size());
+    for (int effect=0; effect<7; ++effect) {
+        auto scene=createFramebufferScene(root,effect);
+        for (int size : {80,160}) {
+            glViewport(0,0,size,size*9/16);
+            scene->render({1.f,.016f,16.f/9.f});
+            GLint draw=0,read=0,viewport[4];
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
+            glGetIntegerv(GL_VIEWPORT,viewport);
+            if (draw!=0 || read!=0 || viewport[2]!=size || viewport[3]!=size*9/16)
+                throw std::runtime_error("Framebuffer scene did not restore target/viewport");
+        }
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
+        if (effect==0) original=output;
+        if (effect==1 || effect==2) {
+            for (size_t p=0;p<output.size();p+=4) {
+                if (effect==1) {
+                    for (int c=0;c<3;++c)
+                        if (std::abs(int(output[p+c])+int(original[p+c])-255)>2)
+                            throw std::runtime_error("Framebuffer invert output incorrect");
+                } else if (output[p]!=output[p+1] || output[p]!=output[p+2])
+                    throw std::runtime_error("Framebuffer grayscale output incorrect");
+            }
+        }
+        if (glGetError()!=GL_NO_ERROR) throw std::runtime_error("Framebuffer effect GL error");
+        glUseProgram(0); glBindVertexArray(0);
+        std::cout << "PASS framebuffer effect + resize: " << effect << '\n';
+    }
+    glViewport(0,0,width,height);
+
 }
