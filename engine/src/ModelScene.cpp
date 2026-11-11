@@ -24,6 +24,7 @@ namespace {
 class ModelTexture {
 public:
     explicit ModelTexture(const unsigned char* rgba, int width, int height) {
+        // 解码后的 CPU 像素在 glTexImage2D 中复制到 GPU，上传后不必持续保存原图片内存。
         glGenTextures(1, &id_);
         glBindTexture(GL_TEXTURE_2D, id_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -42,6 +43,7 @@ private:
 };
 
 struct ModelVertex {
+    // position/normal/uv 与 model.vs 的 location 0/1/2 一致，使用观察与光照计算各自所需数据。
     glm::vec3 position;
     glm::vec3 normal;
     glm::vec2 uv;
@@ -78,6 +80,7 @@ public:
     ModelMesh(const ModelMesh&) = delete;
     ModelMesh& operator=(const ModelMesh&) = delete;
     void draw(Shader& shader) const {
+        // 每个子网格可以使用不同材质；必须在其 draw call 之前更新 uniform 和纹理绑定。
         shader.setVec3("baseColor", color_);
         shader.setInt("hasTexture", texture_ ? 1 : 0);
         glActiveTexture(GL_TEXTURE0);
@@ -98,6 +101,8 @@ public:
         Assimp::Importer importer;
         // 烘焙节点层级变换（包含法线），避免多节点模型的位置、旋转或缩放丢失。
         // 本预览显示静态姿态，不包含骨骼动画播放。
+        // Triangulate 把多边形拆成三角形，GenSmoothNormals 为缺失法线的模型补法线；
+        // 这些步骤不等于增加模型细节，轮廓精细度仍取决于模型原有的几何数据。
         const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate |
             aiProcess_JoinIdenticalVertices | aiProcess_GenSmoothNormals |
             aiProcess_PreTransformVertices | aiProcess_SortByPType | aiProcess_FlipUVs | aiProcess_ValidateDataStructure);
@@ -107,6 +112,7 @@ public:
         glm::vec3 lower(std::numeric_limits<float>::max()), upper(std::numeric_limits<float>::lowest());
         const unsigned char white[] = {255, 255, 255, 255};
         const auto fallback = std::make_shared<ModelTexture>(white, 1, 1);
+        // 多个材质可以引用同一图片，缓存共享 GPU 纹理，避免重复解码和上传。
         std::map<std::string, std::shared_ptr<ModelTexture>> textureCache;
         const auto directory = std::filesystem::u8path(path).parent_path();
         for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
@@ -143,6 +149,7 @@ public:
                 if (aiGetMaterialColor(&material, AI_MATKEY_BASE_COLOR, &base) == AI_SUCCESS ||
                     aiGetMaterialColor(&material, AI_MATKEY_COLOR_DIFFUSE, &base) == AI_SUCCESS)
                     color = {base.r, base.g, base.b};
+                // 只把基础颜色/漫反射图当颜色采样；Bump/Normal/金属度图不能直接混作颜色图。
                 aiString texturePath;
                 if (material.GetTexture(aiTextureType_BASE_COLOR, 0, &texturePath) == AI_SUCCESS ||
                     material.GetTexture(aiTextureType_DIFFUSE, 0, &texturePath) == AI_SUCCESS) {
@@ -162,6 +169,7 @@ public:
         }
         if (meshes_.empty()) throw std::runtime_error("Model contains no triangle meshes");
         center_ = lower * .5f + upper * .5f;
+        // 包围盒中点用来居中，最大边长用来统一显示尺度，不改动源模型文件。
         const glm::vec3 extent = upper - lower;
         const float size = std::max({extent.x, extent.y, extent.z});
         if (!std::isfinite(size)) throw std::runtime_error("Model bounds exceed float range");
@@ -169,6 +177,7 @@ public:
         scale_ = size > 1e-8f ? 2.f / size : 1.f;
         // importer 即将析构；所有需要的网格和纹理数据此时均已复制到 GPU。
     }
+    // 顶点实际经历：移到模型中心 -> 统一缩放 -> X/Y/Z 旋转；矩阵作用顺序由右向左。
     void draw(Shader& shader, float rotationX, float rotationY, float rotationZ) const {
         const glm::mat4 orientation = glm::rotate(glm::mat4(1), glm::radians(rotationZ), glm::vec3(0,0,1)) *
                                      glm::rotate(glm::mat4(1), glm::radians(rotationY), glm::vec3(0,1,0)) *
@@ -194,6 +203,7 @@ private:
             }
             return std::make_shared<ModelTexture>(rgba.data(), embedded->mWidth, embedded->mHeight);
         }
+        // mHeight=0 表示压缩图像，mWidth 此时是字节数（不是像素宽度）。
         if (embedded) {
             const auto* data = reinterpret_cast<const unsigned char*>(embedded->pcData);
             bytes.assign(data, data + embedded->mWidth);

@@ -4,10 +4,10 @@
 #include <stdexcept>
 
 namespace {
-// Registration order is shared by the UI and smoke test.
+// 列表索引同时供主界面、工厂和冒烟测试使用；调整顺序时必须同步相关索引。
 const std::vector<SceneInfo> sceneInfos = {
     {"No scene"}, {"Model viewer"}, {"Triangle"}, {"Uniform rectangle"}, {"Texture"},
-    {"Transform+Face culling"}, {"Phong lighting + materials"}, {"Depth testing"}, {"Stencil testing"}, {"Blending"}, {"Framebuffers"}
+    {"Transform+Face culling"}, {"Phong lighting + materials"}, {"Depth testing"}, {"Stencil testing"}, {"Blending"}, {"Framebuffers"}, {"Cubemaps"}
 };
 
 }
@@ -28,6 +28,7 @@ std::unique_ptr<Scene> createScene(int index, const std::string& root) {
         case 8: return createStencilTestingScene(root);
         case 9: return createBlendingScene(root);
         case 10: return createFramebufferScene(root);
+        case 11: return createCubemapScene(root);
         default: throw std::out_of_range("Invalid scene index");
     }
 }

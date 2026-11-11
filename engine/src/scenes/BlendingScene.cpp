@@ -14,7 +14,7 @@ public:
               5,-.5f,5,2,0, -5,-.5f,5,0,0, -5,-.5f,-5,0,2,
               5,-.5f,5,2,0, -5,-.5f,-5,0,2, 5,-.5f,-5,2,2
           }, {3,2}),
-          // Same upright quad as the tutorial. Texture loading already flips V.
+          // 竖直四边形承载草叶/窗户图片；图片加载已翻转行序，不再翻转 UV。
           quad_(std::vector<float>{0,-.5f,0,0,0, 1,-.5f,0,1,0,
                                   1,.5f,0,1,1, 0,.5f,0,0,1}, {3,2}, {0,1,2,0,2,3}),
           marble_(root + "/resources/textures/marble.jpg"),
@@ -31,11 +31,11 @@ public:
         shader_->setMat4("view", camera_.GetViewMatrix());
         shader_->setMat4("projection", projection(frame));
         shader_->setFloat("alphaCutoff", 0.f);
-        // 1. All opaque surfaces write depth before any translucent windows.
+        // 1. 先绘制不透明物体并写深度，让后面的透明片元仍能被箱子/地面遮挡。
         marble_.bind(0);
         draw(cube_, {-1,0,-1}); draw(cube_, {2,0,0});
         metal_.bind(0); draw(floor_, {0,0,0});
-        // Alpha cutouts belong to the opaque pass: discarded fragments write no depth.
+        // 草叶采用镂空而非混合：shader 丢弃低 alpha 片元，其余片元正常写颜色和深度。
         if (showGrass_) {
             shader_->setFloat("alphaCutoff", discardGrass_ ? cutoff_ : 0.f);
             grass_.bind(0);
@@ -43,13 +43,13 @@ public:
         }
         shader_->setFloat("alphaCutoff", 0.f);
         if (showWindows_) {
-            // 2. Re-sort every frame as the camera moves. Stable sort preserves all
-            // windows at equal distances (a distance-keyed map would lose entries).
+            // 2. 相机移动后每帧重新排序。稳定排序保留同距离的窗户，避免以距离为键覆盖对象。
             auto order = windowOrder();
-            // 3. Blend against opaque geometry and the previously drawn windows.
+            // 3. 标准透明混合：新颜色*alpha + 已绘制颜色*(1-alpha)，因此提交顺序很重要。
             if (blend_) glEnable(GL_BLEND);
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            // 关闭透明物体深度写入，但保持深度测试；避免前面的窗户挡掉后面的透明层。
             glDepthMask(windowDepthWrite_ ? GL_TRUE : GL_FALSE);
             window_.bind(0);
             for (int index : order) draw(quad_, windowPositions_[index]);
@@ -80,6 +80,7 @@ public:
         if (ImGui::Button("Reset camera")) camera_=Camera(glm::vec3(0,0,3));
     }
 private:
+    // 混合因子、方程和深度写掩码都属于上下文；离开本次绘制时一起恢复。
     struct State {
         GLboolean depth=glIsEnabled(GL_DEPTH_TEST), blend=glIsEnabled(GL_BLEND), cull=glIsEnabled(GL_CULL_FACE), mask;
         GLint depthFunc, srcRGB, dstRGB, srcAlpha, dstAlpha, equationRGB, equationAlpha;
@@ -104,7 +105,7 @@ private:
     std::vector<int> windowOrder() const {
         std::vector<int> order{0,1,2,3,4};
         if (sortMode_ != 2) std::stable_sort(order.begin(),order.end(),[&](int a,int b) {
-            // Use placement distances, matching LearnOpenGL's object sorting.
+            // 与教程一致按放置点到相机的距离排序，是对象级近似；交叉/大面积透明面不保证正确。
             float da=glm::length(windowPositions_[a]-camera_.Position);
             float db=glm::length(windowPositions_[b]-camera_.Position);
             return sortMode_ == 0 ? da > db : da < db;
@@ -115,7 +116,7 @@ private:
     Mesh cube_, floor_, quad_;
     Texture marble_, metal_, grass_, window_;
     const std::vector<glm::vec3> windowPositions_{{-1.5f,0,-.48f},{1.5f,0,.51f},{0,0,.7f},{-.3f,0,-2.3f},{.5f,0,-.6f}};
-    // Additional cutouts allow grass and tutorial windows to coexist without coplanar overlap.
+    // 草叶另放一些位置，避免与窗户共面产生深度冲突。
     const std::vector<glm::vec3> grassPositions_{{-2,0,-.8f},{-1.2f,0,.8f},{.4f,0,-2.8f}};
     bool showGrass_=true, showWindows_=true, discardGrass_=true, blend_=true, windowDepthWrite_=false;
     float cutoff_=.1f;

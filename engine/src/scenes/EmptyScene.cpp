@@ -5,6 +5,7 @@
 
 using namespace sceneSupport;
 namespace {
+// 仅保留主循环的清屏和 ImGui：空场景不上传网格、不提交 draw call。
 class EmptyScene final : public Scene {
 public:
     void render(const SceneFrame&) override { glDisable(GL_DEPTH_TEST); }

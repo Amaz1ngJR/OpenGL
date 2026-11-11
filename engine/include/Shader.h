@@ -9,10 +9,12 @@ public:
     unsigned int ID = 0;
     Shader(const char* vertexPath, const char* fragmentPath);
     ~Shader();
+    // program ID 由此对象独占；禁止拷贝，避免多个析构函数重复删除同一个 GPU 对象。
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;
 
     void use() const;
+    // uniform 在一次绘制中对全部顶点/片元共享；调用 set* 前必须先 use() 激活本程序。
     void setInt(const std::string& name, int value) const;
     void setFloat(const std::string& name, float value) const;
     void setVec3(const std::string& name, const glm::vec3& value) const;

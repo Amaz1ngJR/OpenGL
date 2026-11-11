@@ -168,6 +168,29 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
         glUseProgram(0); glBindVertexArray(0);
         std::cout << "PASS framebuffer effect + resize: " << effect << '\n';
     }
+    // Render all independent reflection/refraction combinations. A skybox-only
+    // image would look non-empty too, so require each object's half to change.
+    std::vector<unsigned char> reflected(160*90*4), mapped(reflected.size());
+    glViewport(0,0,160,90);
+    for (int cubeMode=0;cubeMode<2;++cubeMode) for (int sphereMode=0;sphereMode<2;++sphereMode) {
+        auto scene=createCubemapScene(root,cubeMode,sphereMode);
+        glDepthMask(GL_TRUE); glClearDepth(1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({1.f,.016f,16.f/9.f});
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,mapped.data());
+        if (cubeMode==0 && sphereMode==0) reflected=mapped;
+        size_t leftChanged=0,rightChanged=0;
+        for (int y=0;y<90;++y) for (int x=0;x<160;++x) {
+            size_t p=(y*160+x)*4;
+            int difference=0;
+            for (int c=0;c<3;++c) difference+=std::abs(int(mapped[p+c])-int(reflected[p+c]));
+            if (difference>12) { if(x<80) ++leftChanged; else ++rightChanged; }
+        }
+        if ((cubeMode==1 && leftChanged<20) || (sphereMode==1 && rightChanged<20))
+            throw std::runtime_error("Cubemap object reflection/refraction did not change");
+        if (glGetError()!=GL_NO_ERROR) throw std::runtime_error("Cubemap GL error");
+        glUseProgram(0); glBindVertexArray(0);
+        std::cout << "PASS cubemap modes: " << cubeMode << ", " << sphereMode << '\n';
+    }
     glViewport(0,0,width,height);
 
 }

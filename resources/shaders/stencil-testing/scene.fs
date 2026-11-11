@@ -5,6 +5,7 @@ uniform vec3 color;
 uniform sampler2D surfaceTexture;
 uniform bool useTexture;
 void main() {
-    // 箱子本体采样贴图，描边与模板掩码预览仍输出纯色，不改变模板测试规则。
+    // 第一遍箱子采样贴图，第二遍放大的描边输出纯色。
+    // 模板值写入与比较由 CPU 配置的 glStencilOp/glStencilFunc 决定，并非此颜色开关控制。
     FragColor = useTexture ? texture(surfaceTexture, texCoord) : vec4(color, 1.0);
 }

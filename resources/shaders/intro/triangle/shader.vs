@@ -20,7 +20,7 @@ out vec3 vertexColor;
 
 void main() {
     // gl_Position 是内置输出，类型为 vec4，表示该顶点在裁剪空间中的齐次坐标
-    // 这里没有做任何变换，直接把 NDC 坐标扩展为齐次坐标 (w = 1.0)
+    // 这里直接输出 w=1 的裁剪坐标，因此之后透视除法得到的 NDC 与 aPos 数值一致。
     gl_Position = vec4(aPos, 1.0);
 
     // 把顶点颜色原样传给片段着色器

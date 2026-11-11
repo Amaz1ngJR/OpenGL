@@ -20,12 +20,13 @@ Camera::Camera(float posX, float posY, float posZ, float upX, float upY, float u
     updateCameraVectors();
 }
 
-// 获取当前相机位置
+// 返回观察矩阵而不是相机坐标：相当于把世界平移/旋转到相机的局部坐标系。
+// lookAt 的目标点是 Position+Front（一个点），不是仅有方向的 Front。
 glm::mat4 Camera::GetViewMatrix() {
     return glm::lookAt(Position, Position + Front, Up);
 }
 
-// 根据当前欧拉角重新计算 Front、Right、Up 向量
+// 按速度（世界单位/秒）乘以帧间隔得到位移；连续按键不会依赖键盘重复事件频率。
 void Camera::ProcessKeyboard(Camera_Movement direction, float deltaTime) {
     float velocity = MovementSpeed * deltaTime; // 计算本帧移动距离
     if (direction == FORWARD)
@@ -47,7 +48,7 @@ void Camera::ProcessMouseMovement(float xoffset, float yoffset, GLboolean constr
     Yaw   += xoffset;   // 左右旋转（偏航）
     Pitch += yoffset;   // 上下旋转（俯仰）
 
-    // 限制俯仰角在 [-89°, 89°] 之间，避免万向节死锁和画面翻转
+    // 限制俯仰角在 [-89°, 89°]：避免 Front 与 WorldUp 平行导致叉乘为零，以及上下翻转。
     if (constrainPitch)
     {
         if (Pitch > 89.0f)
@@ -59,7 +60,7 @@ void Camera::ProcessMouseMovement(float xoffset, float yoffset, GLboolean constr
     // 根据新的欧拉角重新计算相机的方向向量
     updateCameraVectors();
 }
-// 根据当前 Zoom 值重新计算 FOV
+// 滚轮修改透视投影的 FOV，不是让相机位置向前移动；投影矩阵由场景每帧重新计算。
 void Camera::ProcessMouseScroll(float yoffset) {
     // 调整 Zoom（FOV）：滚轮向上（yoffset > 0）则 Zoom 减小（拉近）
     Zoom -= (float)yoffset;

@@ -5,6 +5,7 @@
 
 using namespace sceneSupport;
 namespace {
+// 受光物体和可见灯泡是两次绘制：前者计算材质响应，后者直接显示光源颜色。
 class LightingScene final : public CameraScene {
 public:
     explicit LightingScene(const std::string& root)
@@ -27,6 +28,8 @@ public:
         shader_->setMat4("view", view);
         shader_->setMat4("model", glm::mat4(1));
         shader_->setVec3("viewPos", camera_.Position);
+        // 环境/漫反射/镜面分量使用同一光色但不同强度；物体最终颜色还会乘材质系数。
+        // shader 中用的是世界坐标，lightPos、viewPos 和顶点位置必须在同一空间。
         shader_->setVec3("light.position", lightPos);
         shader_->setVec3("light.ambient", lightColor * .1f);
         shader_->setVec3("light.diffuse", lightColor * .5f);
@@ -34,6 +37,7 @@ public:
         shader_->setVec3("material.ambient", materialAmbient_);
         shader_->setVec3("material.diffuse", materialDiffuse_);
         shader_->setVec3("material.specular", materialSpecular_);
+        // shininess 控制高光集中程度：指数越大高光越窄，不等同于增加灯光亮度。
         shader_->setFloat("material.shininess", materialShininess_);
         // 先绘制受光物体，再切换灯泡 shader 用同一网格绘制缩小后的光源。
         mesh_.draw();

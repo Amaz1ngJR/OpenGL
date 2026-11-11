@@ -24,6 +24,8 @@ public:
     void render(const SceneFrame& frame) override {
         // 深度比较和写入是上下文状态，保存/恢复，不能泄露到下一帧清屏和其他场景。
         DepthState previous;
+        // 比较规则决定片元能否通过；写掩码只控制通过后是否更新缓冲，二者互相独立。
+        // 禁用 GL_DEPTH_TEST 则比较和深度写入都停止，不能靠写掩码单独开启写入。
         glDepthFunc(depthFunctions_[depthFunction_]);
         glDepthMask(writeDepth_ ? GL_TRUE : GL_FALSE);
         if (testDepth_) glEnable(GL_DEPTH_TEST);
@@ -35,8 +37,8 @@ public:
         shader_->setFloat("farPlane", farPlane_);
         shader_->setInt("displayMode", displayMode_);
         shader_->setInt("solidColor", false);
-        // Optional reference geometry shares the scene camera and projection.
-        marble_.bind(0); // Keep the sampler complete even during solid-color reference draws.
+        // 灰卡与普通几何使用同一个相机/投影，先存一份已知深度供彩色卡片比较。
+        marble_.bind(0); // 纯色参考绘制期间也保持采样器绑定完整的纹理。
         if (referenceDepth_) drawCards(true);
         if (floorFirst_) drawFloor();
         drawCubes();
@@ -151,11 +153,12 @@ private:
             if (enabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
         }
     };
-    // Green replays the identical model and vertex data, so EQUAL compares the
-    // same rasterized depth rather than merely approximately coplanar surfaces.
+    // 绿色卡片重用灰卡完全相同的顶点和模型矩阵，从而比较相同的光栅化深度，
+    // 而不是两个“看起来共面”的独立表面。橙/蓝卡在默认视角分别更近/更远。
     void drawCards(bool reference) {
         shader_->setInt("solidColor", true);
         if (reference) {
+            // 参考遍固定开启测试和写入，不受 UI 当前规则影响；画完后恢复用户设置。
             glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(GL_TRUE);
         }
         const glm::vec3 colors[] = {{1,.35f,.08f},{.1f,.9f,.3f},{.1f,.45f,1}};

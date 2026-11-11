@@ -11,7 +11,7 @@ public:
         : shader_(loadShader(root, "stencil-testing", "scene")), cube_(cubeVertices(false), {3,2}),
           container_(root + "/resources/textures/container2.png") {}
     void render(const SceneFrame& frame) override {
-        // Save every state modified below, including clear value and write masks.
+        // 深度和模板是独立测试；保存比较、操作及写掩码，结束后还原上下文状态。
         GLboolean depth = glIsEnabled(GL_DEPTH_TEST), stencil = glIsEnabled(GL_STENCIL_TEST), mask;
         GLint depthFunc, func, ref, valueMask, writeMask, fail, zfail, pass, clear;
         glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
@@ -20,13 +20,14 @@ public:
         glGetIntegerv(GL_STENCIL_VALUE_MASK, &valueMask); glGetIntegerv(GL_STENCIL_WRITEMASK, &writeMask);
         glGetIntegerv(GL_STENCIL_FAIL, &fail); glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &zfail);
         glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &pass); glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &clear);
+        // glClear 也受写掩码影响，先允许写全部 8 位，再将模板缓冲清为 0。
         glStencilMask(0xff); glClearStencil(0); glClear(GL_STENCIL_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(GL_TRUE);
         glEnable(GL_STENCIL_TEST);
         shader_->use();
         shader_->setMat4("view", camera_.GetViewMatrix());
         shader_->setMat4("projection", projection(frame));
-        // Offset to the right leaves room for the control panel.
+        // 物体稍向右放，给左侧控制面板留空间；同一几何绘制两次，第二遍放大成外壳。
         auto draw = [&](float scale, glm::vec3 color) {
             shader_->setVec3("color", color);
             for (auto position : {glm::vec3(.3f,0,0), glm::vec3(1.1f,.15f,-1.2f)}) {
@@ -38,6 +39,7 @@ public:
         };
         glStencilFunc(GL_ALWAYS, 1, 0xff);
         glStencilMask(writeStencil_ ? 0xff : 0x00);
+        // 三种操作依次对应模板失败、模板通过但深度失败、两者都通过；仅最后一种写 ref=1。
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
         // 第一遍绘制箱子贴图并写入模板；掩码预览只显示白色，便于观察写入区域。
         container_.bind(0);
@@ -47,9 +49,11 @@ public:
         if (stage_ != 1) {
             // 第二遍使用纯色放大外壳，不能把箱子贴图带到描边上。
             shader_->setInt("useTexture", false);
-            glStencilMask(0); // second pass must not alter the reference mask
+            glStencilMask(0); // 第二遍只读模板，不再修改第一遍记录的轮廓区域。
             glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
             const GLenum functions[] = {GL_NOTEQUAL, GL_EQUAL, GL_ALWAYS, GL_NEVER};
+            // 默认 NOTEQUAL 排除模板为 1 的本体区域，只留下放大外壳超出的那圈描边。
+            // compareMask_ 是比较位掩码，不等于控制写入的 glStencilMask。
             glStencilFunc(functions[function_], reference_, compareMask_);
             if (!testStencil_) glDisable(GL_STENCIL_TEST);
             if (!outlineDepth_) glDisable(GL_DEPTH_TEST);

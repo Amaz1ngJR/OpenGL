@@ -5,6 +5,7 @@
 
 using namespace sceneSupport;
 namespace {
+// 同一个四边形演示单纹理、双纹理混合及采样规则，UI 改动在同一帧上传 uniform。
 class TextureScene final : public Scene {
 public:
     explicit TextureScene(const std::string& root)
@@ -16,6 +17,7 @@ public:
           container_(root + "/resources/textures/container.jpg"),
           face_(root + "/resources/textures/awesomeface.png", GL_MIRRORED_REPEAT) {
         shader_->use();
+        // sampler2D 的值是纹理单元编号，不是 container_/face_ 的 OpenGL 对象 ID。
         shader_->setInt("texture0", 0);
         shader_->setInt("texture1", 1);
     }
@@ -26,6 +28,7 @@ public:
         shader_->setInt("vertexTint", vertexTint_);
         shader_->setFloat("mixFactor", mixFactor_);
         shader_->setFloat("uvScale", uvScale_);
+        // 绑定必须发生在 draw 之前；构造函数中的绑定可能已被其他纹理或 ImGui 改变。
         container_.bind(0);
         face_.bind(1);
         mesh_.draw();

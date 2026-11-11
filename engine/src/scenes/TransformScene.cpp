@@ -40,7 +40,8 @@ public:
             {2.4f,-.4f,-3.5f}, {-1.7f,3,-7.5f}, {1.3f,-2,-2.5f},
             {1.5f,2,-2.5f}, {1.5f,.2f,-1.5f}, {-1.3f,1,-1.5f}
         };
-        // 一个位置按平移、旋转顺序变换，并绘制十个不同位置的立方体。
+        // GLM 在矩阵右侧追加变换，下面得到 T*R：作用于顶点时先绕自身原点旋转，
+        // 再平移到世界位置。写代码的顺序与顶点实际经历的变换顺序相反。
         for (int i = 0; i < 10; ++i) {
             auto model = glm::translate(glm::mat4(1), positions[i]);
             model = glm::rotate(model, frame.time * glm::radians(i == 0 ? 50.f : 20.f * i), glm::vec3(.5f,1,0));

@@ -33,6 +33,7 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath) {
     unsigned int vertex = 0, fragment = 0;
     try {
         const char* source = vertexSource.c_str();
+        // 顶点与片元阶段分别编译；编译成功不代表二者的输入/输出接口一定匹配。
         vertex = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertex, 1, &source, nullptr);
         glCompileShader(vertex);
@@ -42,6 +43,7 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath) {
         glShaderSource(fragment, 1, &source, nullptr);
         glCompileShader(fragment);
         check(fragment, false, fragmentPath);
+        // 链接 program 时检查阶段之间的接口；glUseProgram 选择的是 program 而非单个 shader。
         ID = glCreateProgram();
         glAttachShader(ID, vertex);
         glAttachShader(ID, fragment);
@@ -62,7 +64,10 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath) {
 // Shader 对象由场景拥有，离开场景时自动释放 program。
 Shader::~Shader() { if (ID) glDeleteProgram(ID); }
 void Shader::use() const { glUseProgram(ID); }
+// set* 前调用 use()；glUniform 修改当前程序。未使用/不存在的 uniform 位置为 -1，更新会被忽略。
+// sampler2D/samplerCube 也用整数设置，但值表示纹理单元编号，不是纹理 ID。
 void Shader::setInt(const std::string& name, int value) const { glUniform1i(glGetUniformLocation(ID, name.c_str()), value); }
 void Shader::setFloat(const std::string& name, float value) const { glUniform1f(glGetUniformLocation(ID, name.c_str()), value); }
 void Shader::setVec3(const std::string& name, const glm::vec3& value) const { glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, glm::value_ptr(value)); }
+// GLM 按列存储，与 GLSL 默认矩阵布局一致，transpose=GL_FALSE，不需要手动转置。
 void Shader::setMat4(const std::string& name, const glm::mat4& value) const { glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, glm::value_ptr(value)); }

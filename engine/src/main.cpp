@@ -2,6 +2,7 @@
 #include "ModelScene.h"
 #include "FileDialog.h"
 #include "SmokeTest.h"
+// GLAD 必须先于 GLFW 的 OpenGL 头文件包含：它声明本程序使用的 GL 函数指针。
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -27,6 +28,7 @@ void cursorCallback(GLFWwindow* window, double x, double y) {
     auto& input = *static_cast<InputState*>(glfwGetWindowUserPointer(window));
     if (!input.firstMouse) {
         input.mouseX += static_cast<float>(x - input.lastX);
+        // 窗口坐标 y 向下增加，相机俯仰通常以向上为正，因此这里反向相减。
         input.mouseY += static_cast<float>(input.lastY - y);
     }
     input.lastX = x;
@@ -47,11 +49,13 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         const double now = glfwGetTime();
+        // 限制暂停/拖窗后的超长帧，防止 WASD 一帧跨越很远；正常帧仍按秒计算速度。
         const float deltaTime = std::min(static_cast<float>(now - previous), .1f);
         previous = now;
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
+        // UI 修改的是场景 CPU 参数；同一帧稍后的 render() 再将参数传给 GPU。
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -125,15 +129,19 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
         state.mouseX = state.mouseY = state.scroll = 0;
         scene->input(input, deltaTime);
         int width = 0, height = 0;
+        // 帧缓冲是实际像素大小，高分屏可能不同于窗口逻辑尺寸；viewport 和 aspect 要一致。
         glfwGetFramebufferSize(window, &width, &height);
         if (width > 0 && height > 0) {
             glViewport(0, 0, width, height);
             glClearColor(.12f, .14f, .18f, 1);
+            // 每帧清除颜色和上一帧的深度；glClearColor 只设状态，glClear 才执行清除。
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             scene->render({static_cast<float>(now), deltaTime, static_cast<float>(width) / height});
         }
+        // 场景先画、GUI 后画，使控制面板不被场景遮住或被场景后期滤镜处理。
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        // 双缓冲：把刚绘制完成的后台缓冲显示出来，下一帧再继续绘制后台缓冲。
         glfwSwapBuffers(window);
     }
     // 场景析构先于 ImGui 和 GLFW，保证删除 GPU 对象时上下文仍然有效。
@@ -151,6 +159,7 @@ int main(int argc, char** argv) {
     }
     glfwSetErrorCallback([](int, const char* message) { std::cerr << "GLFW: " << message << '\n'; });
     if (!glfwInit()) return 1;
+    // Core Profile 禁用旧固定管线；此项目用 VAO/VBO 和 GLSL 程序绘制。
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
