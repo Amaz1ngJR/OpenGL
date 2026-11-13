@@ -191,6 +191,59 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
         glUseProgram(0); glBindVertexArray(0);
         std::cout << "PASS cubemap modes: " << cubeMode << ", " << sphereMode << '\n';
     }
+    // 不仅检查行星非空：0 实例作为基线，实例化必须确实画出小行星，且与普通绘制一致。
+    glViewport(0,0,320,180);
+    std::vector<unsigned char> planetOnly(320*180*4),instancedPixels(planetOnly.size()),ordinary(planetOnly.size());
+    // 天空盒覆盖整屏，因此"行星基线"的每个像素都应该被星空而非黑色背景占据。
+    std::vector<unsigned char> skyOnly(planetOnly.size());
+    for (int amount : {0,1,2000}) {
+        for (bool instanced : {true,false}) {
+            auto scene=createAsteroidBeltScene(root,amount,instanced);
+            glClearColor(0,0,0,1); glDepthMask(GL_TRUE); glClearDepth(1);
+            glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            // 检查场景恢复自己修改的深度、混合、剔除和写掩码状态。
+            glDisable(GL_DEPTH_TEST); glEnable(GL_BLEND); glEnable(GL_CULL_FACE); glDepthMask(GL_FALSE);
+            scene->render({1.f,.016f,16.f/9.f});
+            GLboolean mask=GL_TRUE; glGetBooleanv(GL_DEPTH_WRITEMASK,&mask);
+            if (glIsEnabled(GL_DEPTH_TEST) || !glIsEnabled(GL_BLEND) || !glIsEnabled(GL_CULL_FACE) || mask)
+                throw std::runtime_error("Asteroid belt did not restore render state");
+            auto& image=instanced ? instancedPixels : ordinary;
+            glReadPixels(0,0,320,180,GL_RGBA,GL_UNSIGNED_BYTE,image.data());
+            if (amount==0 && instanced) { planetOnly=image; skyOnly=image; }
+            if (glGetError()!=GL_NO_ERROR) throw std::runtime_error("Asteroid belt GL error");
+        }
+        size_t changed=0,mismatch=0;
+        for (size_t p=0;p<ordinary.size();p+=4) {
+            int difference=0,error=0;
+            for (int c=0;c<3;++c) {
+                difference+=std::abs(int(instancedPixels[p+c])-int(planetOnly[p+c]));
+                error+=std::abs(int(instancedPixels[p+c])-int(ordinary[p+c]));
+            }
+            if (difference>12) ++changed;
+            if (error>6) ++mismatch;
+        }
+        if ((amount==1 && changed==0) || (amount==2000 && changed<100) || mismatch>10)
+            throw std::runtime_error("Asteroid belt instances missing or different from ordinary drawing");
+        std::cout << "PASS asteroid belt instanced vs ordinary: " << amount << '\n';
+    }
+    // 星空背景：宇宙素材绝大部分是深色，不能用"非黑像素比例"判断，那样的阈值对
+    // 《星际穿越》风格的黑洞全景毫无意义。改为与清屏色 (0,0,0) 对比平均亮度：
+    // 没有天空盒时整屏接近 0；加载成功后视野内应有可见的星云与星点。
+    // 同时统计最亮像素，确认确实存在亮星而不是一片死黑。
+    size_t total=skyOnly.size()/4,litPixels=0,brightPixels=0;
+    double sum=0.0;
+    for (size_t p=0;p<skyOnly.size();p+=4) {
+        const int value=std::max({skyOnly[p],skyOnly[p+1],skyOnly[p+2]});
+        sum+=value;
+        if (value>8) ++litPixels;
+        if (value>80) ++brightPixels;
+    }
+    const double mean=sum/total;
+    if (mean<3.0 || litPixels<total/5 || brightPixels<20)
+        throw std::runtime_error("Asteroid belt skybox is missing or too dark");
+    std::cout << "PASS asteroid belt skybox: mean " << mean << ", lit " << litPixels*100/total
+              << "%, bright " << brightPixels << '\n';
+    glDepthMask(GL_TRUE); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
     glViewport(0,0,width,height);
 
 }
