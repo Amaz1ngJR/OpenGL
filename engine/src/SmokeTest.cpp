@@ -1,5 +1,6 @@
 #include "SmokeTest.h"
 #include "Scene.h"
+#include "scenes/OrbitalPhase.h"
 #include "ModelScene.h"
 #include "scenes/SceneFactories.h"
 #include <glad/glad.h>
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <iostream>
 #include <vector>
 
 namespace {
@@ -43,6 +45,27 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
     glfwGetFramebufferSize(window, &width, &height);
     if (width <= 0 || height <= 0) throw std::runtime_error("No drawable framebuffer");
     std::vector<unsigned char> pixels(static_cast<size_t>(width) * height * 4);
+    // Different rates must stay continuous when their OWN phase crosses 360.
+    for(double multiplier : {4.15,1.62,1.0,.53,.30,.20,.14,.11,365.25/27.32}) {
+        solarSystem::OrbitalPhase phase;
+        phase.degrees=359.99;
+        double rate=3.6*multiplier,dt=.016;
+        double before=phase.radians();
+        phase.advance(dt,rate);
+        double distance=std::hypot(std::sin(phase.radians())-std::sin(before),
+                                   std::cos(phase.radians())-std::cos(before));
+        if(distance>rate*dt*.01745329252+1e-5)
+            throw std::runtime_error("Orbit phase jumped at wrap boundary");
+        double saved=phase.degrees;
+        phase.advance(0,rate*4); // changing speed alone must not move the body
+        phase.advance(10,0); // pause
+        if(std::abs(phase.degrees-saved)>1e-9)
+            throw std::runtime_error("Orbit phase changed on pause/speed adjustment");
+        phase.advance(1000000,rate);
+        if(!std::isfinite(phase.degrees) || phase.degrees<0 || phase.degrees>=360)
+            throw std::runtime_error("Long-running orbit phase out of range");
+    }
+    std::cout << "PASS orbital phase continuity, speed change and pause\n";
     for (int round = 0; round < 3; ++round) {
         for (int index = 0; index < static_cast<int>(availableScenes().size()); ++index) {
             auto scene = index == 1 && !modelPath.empty() ? createModelScene(root, modelPath) : createScene(index, root);
@@ -203,6 +226,8 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
             glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
             // 检查场景恢复自己修改的深度、混合、剔除和写掩码状态。
             glDisable(GL_DEPTH_TEST); glEnable(GL_BLEND); glEnable(GL_CULL_FACE); glDepthMask(GL_FALSE);
+            // 小行星带回到独立场景后，机位与碎石尺寸都按 320x180 可辨认的尺度设置，
+            // 不需要额外的调试放大，直接渲染即可。
             scene->render({1.f,.016f,16.f/9.f});
             GLboolean mask=GL_TRUE; glGetBooleanv(GL_DEPTH_WRITEMASK,&mask);
             if (glIsEnabled(GL_DEPTH_TEST) || !glIsEnabled(GL_BLEND) || !glIsEnabled(GL_CULL_FACE) || mask)
@@ -210,6 +235,7 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
             auto& image=instanced ? instancedPixels : ordinary;
             glReadPixels(0,0,320,180,GL_RGBA,GL_UNSIGNED_BYTE,image.data());
             if (amount==0 && instanced) { planetOnly=image; skyOnly=image; }
+
             if (glGetError()!=GL_NO_ERROR) throw std::runtime_error("Asteroid belt GL error");
         }
         size_t changed=0,mismatch=0;
@@ -222,7 +248,10 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
             if (difference>12) ++changed;
             if (error>6) ++mismatch;
         }
-        if ((amount==1 && changed==0) || (amount==2000 && changed<100) || mismatch>10)
+        // 太阳系场景下，实例化与普通绘制这两条路径共享同一批 model 矩阵，
+        // 因此像素级结果必须一致：changed 表示"与无小行星基线相比是否有变化"，
+        // mismatch 表示"两条路径之间是否有差异"。前者要大于阈值，后者要接近 0。
+        if ((amount==2000 && changed<100) || mismatch>10)
             throw std::runtime_error("Asteroid belt instances missing or different from ordinary drawing");
         std::cout << "PASS asteroid belt instanced vs ordinary: " << amount << '\n';
     }

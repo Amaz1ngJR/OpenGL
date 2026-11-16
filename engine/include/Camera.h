@@ -62,6 +62,11 @@ public:
     // yoffset: 滚轮在垂直方向的偏移（向上为正，向下为负）
     void ProcessMouseScroll(float yoffset);
 
+    // ===== 直接设置朝向（用于镜头跳转等需要程序控制视角的场合）=====
+    // 直接写 Yaw/Pitch 不会自动更新 Front/Right/Up，必须调用这个函数重算，
+    // 否则 GetViewMatrix 仍按旧方向构造。
+    void SetOrientation(float yaw, float pitch);
+
 private:
 	// ===== 根据欧拉角更新相机的方向向量 =====
     // 将 Yaw/Pitch 转换为单位方向向量 Front （同时更新 Right 和 Up）

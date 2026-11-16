@@ -47,6 +47,7 @@ add_executable(OpenGLLearn
     engine/src/scenes/FramebufferScene.cpp
     engine/src/scenes/CubemapScene.cpp
     engine/src/scenes/AsteroidBeltScene.cpp
+    engine/src/scenes/SolarSystemScene.cpp
     engine/src/scenes/LightingScene.cpp
     engine/src/ModelScene.cpp
     engine/src/FileDialog.cpp

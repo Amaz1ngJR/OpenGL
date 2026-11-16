@@ -85,3 +85,14 @@ void Camera::updateCameraVectors() {
     // 重新计算实际的 Up 向量：Right × Front（确保 Up 垂直于观察平面）
     Up = glm::normalize(glm::cross(Right, Front));
 }
+// 供程序直接指定视角方向（镜头跳转、切回默认机位等）。
+// 只改 Yaw/Pitch 而不刷新 Front/Right/Up 的话，GetViewMatrix 仍会用旧方向，
+// 相机看起来完全没有转动，所以这里统一走一次 updateCameraVectors。
+void Camera::SetOrientation(float yaw, float pitch) {
+    Yaw = yaw;
+    // 与鼠标输入一致地限制俯仰，避免 Front 与 WorldUp 平行导致叉乘退化。
+    if (pitch > 89.0f) pitch = 89.0f;
+    if (pitch < -89.0f) pitch = -89.0f;
+    Pitch = pitch;
+    updateCameraVectors();
+}
