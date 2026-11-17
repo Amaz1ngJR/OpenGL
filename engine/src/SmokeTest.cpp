@@ -272,6 +272,47 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
         throw std::runtime_error("Asteroid belt skybox is missing or too dark");
     std::cout << "PASS asteroid belt skybox: mean " << mean << ", lit " << litPixels*100/total
               << "%, bright " << brightPixels << '\n';
+    // Compare the same high-contrast silhouette with every anti-aliasing path.
+    std::vector<unsigned char> noAA(160*90*4),aa(noAA.size());
+    for(int mode=0;mode<4;++mode) {
+        auto scene=createAntiAliasingScene(root,mode);
+        for(int w : {128,160}) {
+            glViewport(0,0,w,w*9/16);
+            scene->render({1.f,.016f,16.f/9.f});
+            GLint draw=0,read=0,vp[4];
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read); glGetIntegerv(GL_VIEWPORT,vp);
+            if(draw || read || vp[2]!=w || vp[3]!=w*9/16)
+                throw std::runtime_error("Anti-aliasing scene leaked framebuffer or viewport");
+        }
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,aa.data());
+        if(mode==0) {
+            noAA=aa;
+            size_t visible[5]={};
+            for(size_t p=0;p<aa.size();p+=4) {
+                float r=aa[p],g=aa[p+1],b=aa[p+2];
+                if(g<45) continue;
+                if(g>r*2 && g>b*1.3f) ++visible[0]; // cube
+                if(b>g*1.3f && g>r*2) ++visible[1]; // sphere
+                if(r>g*1.4f && g>b*2) ++visible[2]; // torus
+                if(r>g*2 && b>g*2) ++visible[3]; // pyramid
+                if(r>90 && std::abs(r-g)<3 && b<g*.9f) ++visible[4]; // bars
+            }
+            for(auto count : visible) if(count<5)
+                throw std::runtime_error("Anti-aliasing geometry group missing");
+        }
+        else {
+            size_t different=0;
+            for(int y=0;y<90;++y) for(int x=80;x<160;++x) {
+                size_t p=(y*160+x)*4;
+                if(std::abs(int(aa[p+1])-int(noAA[p+1]))>2) ++different;
+            }
+            if(different<10) throw std::runtime_error("Anti-aliasing output did not affect edges");
+        }
+        if(glGetError()!=GL_NO_ERROR) throw std::runtime_error("Anti-aliasing GL error");
+        glUseProgram(0); glBindVertexArray(0);
+        std::cout << "PASS anti-aliasing algorithm + resize: " << mode << '\n';
+    }
     glDepthMask(GL_TRUE); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
     glViewport(0,0,width,height);
 

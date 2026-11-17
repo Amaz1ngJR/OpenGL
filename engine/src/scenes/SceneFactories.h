@@ -16,3 +16,4 @@ std::unique_ptr<Scene> createFramebufferScene(const std::string& root, int effec
 std::unique_ptr<Scene> createCubemapScene(const std::string& root, int cubeMode = 0, int sphereMode = 1);
 std::unique_ptr<Scene> createAsteroidBeltScene(const std::string& root, int amount = 2000, bool instanced = true);
 std::unique_ptr<Scene> createSolarSystemScene(const std::string& root);
+std::unique_ptr<Scene> createAntiAliasingScene(const std::string& root, int mode = 1);
