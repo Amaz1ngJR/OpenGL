@@ -233,11 +233,32 @@ private:
     std::string warnings_;
 };
 
+// Polygon/offset/color-mask state must not leak into ImGui or other scenes.
+struct ModelRenderState {
+    GLint polygon[2],function;
+    GLfloat factor,units;
+    GLboolean depth=glIsEnabled(GL_DEPTH_TEST),blend=glIsEnabled(GL_BLEND),cull=glIsEnabled(GL_CULL_FACE),
+              offset=glIsEnabled(GL_POLYGON_OFFSET_FILL),mask,color[4];
+    ModelRenderState() {
+        glGetIntegerv(GL_POLYGON_MODE,polygon); glGetIntegerv(GL_DEPTH_FUNC,&function);
+        glGetFloatv(GL_POLYGON_OFFSET_FACTOR,&factor); glGetFloatv(GL_POLYGON_OFFSET_UNITS,&units);
+        glGetBooleanv(GL_DEPTH_WRITEMASK,&mask); glGetBooleanv(GL_COLOR_WRITEMASK,color);
+    }
+    ~ModelRenderState() {
+        glPolygonMode(GL_FRONT_AND_BACK,polygon[0]); glPolygonOffset(factor,units);
+        glDepthFunc(function); glDepthMask(mask); glColorMask(color[0],color[1],color[2],color[3]);
+        restore(GL_DEPTH_TEST,depth); restore(GL_BLEND,blend); restore(GL_CULL_FACE,cull); restore(GL_POLYGON_OFFSET_FILL,offset);
+    }
+    static void restore(GLenum cap,GLboolean enabled) { if(enabled) glEnable(cap); else glDisable(cap); }
+};
+
 class ModelScene final : public Scene {
 public:
-    ModelScene(const std::string& root, const std::string& path)
+    ModelScene(const std::string& root, const std::string& path, const ModelViewOptions& options)
         : shader_((root + "/resources/shaders/model/model.vs").c_str(),
                   (root + "/resources/shaders/model/model.fs").c_str()) {
+        showTextures_=options.textures; flatShading_=options.flatShading;
+        displayMode_=static_cast<int>(options.display);
         if (!path.empty()) load(path); // 启动路径失败直接报告给调用者，不留下空白的成功状态。
     }
     bool usesCamera() const override { return true; }
@@ -252,16 +273,35 @@ public:
         camera_.ProcessMouseScroll(in.scroll);
     }
     void render(const SceneFrame& frame) override {
-        glEnable(GL_DEPTH_TEST);
         if (!model_) return;
+        ModelRenderState previous;
+        glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+        glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
         shader_.use();
         shader_.setMat4("view", camera_.GetViewMatrix());
         shader_.setMat4("projection", glm::perspective(glm::radians(camera_.Zoom), frame.aspect, .01f, 100.f));
         shader_.setVec3("viewPos", camera_.Position);
         shader_.setInt("diffuseMap", 0);
         shader_.setInt("flipV", flipV_);
-        // UI 是角度的唯一来源，每帧传入模型矩阵，不能再在 Model 中保存另一份角度。
+        shader_.setInt("showTextures",showTextures_);
+        shader_.setInt("flatShading",flatShading_);
+        shader_.setInt("wirePass",false);
+        shader_.setVec3("surfaceColor",surfaceColor_);
+        shader_.setVec3("wireColor",displayMode_==2 ? glm::vec3(.85f) : glm::vec3(.06f));
+        // Push the filled surface back slightly so coplanar triangle edges do not flicker.
+        if(displayMode_!=0) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(1,1); }
+        else glDisable(GL_POLYGON_OFFSET_FILL);
+        if(displayMode_==2) glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);
         model_->draw(shader_, rotationX_, rotationY_, rotationZ_);
+        if(displayMode_!=0) {
+            glColorMask(previous.color[0],previous.color[1],previous.color[2],previous.color[3]);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
+            glDepthFunc(GL_LEQUAL); glDepthMask(GL_FALSE);
+            shader_.setInt("wirePass",true);
+            model_->draw(shader_, rotationX_, rotationY_, rotationZ_);
+        }
     }
     void drawControls() override {
         if (ImGui::Button("Open local model...")) {
@@ -286,7 +326,14 @@ public:
             ImGui::SliderFloat("Rotate Z", &rotationZ_, -180.0f, 180.0f, "%.1f deg");
             ImGui::SameLine();
             if (ImGui::Button("Reset orientation")) resetOrientation();
-            ImGui::Checkbox("Flip texture V", &flipV_);
+            ImGui::SeparatorText("Surface and topology");
+            ImGui::Checkbox("Show textures",&showTextures_);
+            const char* modes[]={"Surface", "Surface + triangle edges", "Triangle wireframe"};
+            ImGui::Combo("Display mode",&displayMode_,modes,3);
+            ImGui::Checkbox("Flat triangle shading",&flatShading_);
+            if(!showTextures_) ImGui::ColorEdit3("Surface color",&surfaceColor_.x);
+            ImGui::TextWrapped("Turn textures off to inspect a neutral mesh surface. Flat shading shows each triangle face; triangle edges show the imported triangulation. Hidden edges are depth-tested.");
+            if(showTextures_) ImGui::Checkbox("Flip texture V", &flipV_);
             if (!model_->warnings().empty()) ImGui::TextWrapped("%s", model_->warnings().c_str());
         } else ImGui::TextWrapped("Select a model to preview. The model will be centered and scaled automatically.");
     }
@@ -315,12 +362,15 @@ private:
     Camera camera_{glm::vec3(0, 0, 4.5f)};
     std::unique_ptr<Model> model_;
     std::string path_, error_;
+    bool showTextures_=true,flatShading_=false;
+    int displayMode_=0;
+    glm::vec3 surfaceColor_{.75f};
     bool flipV_ = false;
     bool skipInput_ = false;
     float rotationX_ = 0, rotationY_ = 0, rotationZ_ = 0;
 };
 }
 
-std::unique_ptr<Scene> createModelScene(const std::string& root, const std::string& modelPath) {
-    return std::make_unique<ModelScene>(root, modelPath);
+std::unique_ptr<Scene> createModelScene(const std::string& root, const std::string& modelPath, const ModelViewOptions& options) {
+    return std::make_unique<ModelScene>(root, modelPath, options);
 }

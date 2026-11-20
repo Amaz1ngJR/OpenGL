@@ -313,6 +313,58 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
         glUseProgram(0); glBindVertexArray(0);
         std::cout << "PASS anti-aliasing algorithm + resize: " << mode << '\n';
     }
+    // Geometry inspection must work even when the imported model has a texture.
+    size_t solidPixels=0;
+    for(int display=0;display<3;++display) {
+        ModelViewOptions options;
+        options.textures=false; options.flatShading=true;
+        options.display=static_cast<ModelViewOptions::Display>(display);
+        auto scene=createModelScene(root,root+"/resources/models/textured-quad/quad.obj",options);
+        glViewport(0,0,160,90); glDepthMask(GL_TRUE); glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({1.f,.016f,16.f/9.f});
+        std::vector<unsigned char> surface(160*90*4);
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,surface.data());
+        size_t visible=0;
+        for(size_t p=0;p<surface.size();p+=4) {
+            if(surface[p] || surface[p+1] || surface[p+2]) ++visible;
+            if(surface[p]!=surface[p+1] || surface[p]!=surface[p+2])
+                throw std::runtime_error("Texture-free model surface is not neutral");
+        }
+        if(!visible) throw std::runtime_error("Model inspection mode is empty");
+        if(display==0) solidPixels=visible;
+        if(display==2 && visible>=solidPixels)
+            throw std::runtime_error("Wireframe unexpectedly fills the model surface");
+        GLint polygon[2]; glGetIntegerv(GL_POLYGON_MODE,polygon);
+        if(polygon[0]!=GL_FILL || polygon[1]!=GL_FILL || glGetError()!=GL_NO_ERROR)
+            throw std::runtime_error("Model inspection leaked polygon state or GL error");
+        glUseProgram(0); glBindVertexArray(0);
+        std::cout << "PASS texture-free model inspection: " << display << '\n';
+    }
+    // A cube has interpolated corner normals; a quad has a constant normal.
+    // Their aligned front planes must shade identically in flat mode, even close up.
+    std::vector<unsigned char> closePlane(640*360*4);
+    for(int shape=0;shape<2;++shape) {
+        ModelViewOptions options; options.textures=false; options.flatShading=true;
+        auto scene=createModelScene(root,root+(shape==0 ? "/resources/models/textured-quad/quad.obj" : "/resources/models/cube/cube.obj"),options);
+        SceneInput input; input.forward=true;
+        scene->input(input,(4.5f-(shape==0 ? .2f : 1.2f))/2.5f);
+        glViewport(0,0,640,360); glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({1.f,.016f,16.f/9.f});
+        std::vector<unsigned char> closeSurface(closePlane.size());
+        glReadPixels(0,0,640,360,GL_RGBA,GL_UNSIGNED_BYTE,closeSurface.data());
+        if(shape==0) closePlane=closeSurface;
+        else {
+            for(int y : {90,180,270}) for(int x : {160,320,480}) {
+                size_t p=(y*640+x)*4;
+                if(std::abs(int(closeSurface[p])-int(closePlane[p]))>2)
+                    throw std::runtime_error("Flat model shading reverted to smooth when close up");
+            }
+        }
+        glUseProgram(0); glBindVertexArray(0);
+    }
+    std::cout << "PASS close-up flat triangle shading\n";
     glDepthMask(GL_TRUE); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
     glViewport(0,0,width,height);
 
