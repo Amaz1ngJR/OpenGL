@@ -15,8 +15,8 @@
 #include <vector>
 
 namespace {
-// 通过真实 ImGui 鼠标事件切换光照控件的首个复选框，覆盖暂停与恢复路径。
-void toggleLightPause(Scene& scene) {
+// 通过真实 ImGui 鼠标事件切换场景的首个复选框。
+void toggleFirstCheckbox(Scene& scene) {
     ImVec2 checkbox;
     for (int step = 0; step < 4; ++step) {
         ImGui_ImplOpenGL3_NewFrame();
@@ -113,7 +113,7 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
                 glGetUniformfv(program, modelLocation, previousModel);
                 glGetUniformfv(program, colorLocation, previousColor);
 
-                toggleLightPause(*scene);
+                toggleFirstCheckbox(*scene);
                 for (float time : {2.0f, 3.0f}) {
                     scene->render({time, .016f, static_cast<float>(width) / height});
                     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
@@ -128,7 +128,7 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
                             throw std::runtime_error("Paused light color changed");
                 }
                 // 取消暂停后时间恢复推进，模型矩阵中的光源位置应继续绕圈。
-                toggleLightPause(*scene);
+                toggleFirstCheckbox(*scene);
                 scene->render({4.0f, .016f, static_cast<float>(width) / height});
                 glGetIntegerv(GL_CURRENT_PROGRAM, &program);
                 GLfloat resumedModel[16]{}, resumedColor[3]{};
@@ -313,6 +313,113 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
         glUseProgram(0); glBindVertexArray(0);
         std::cout << "PASS anti-aliasing algorithm + resize: " << mode << '\n';
     }
+    // Each comparison pane must reproduce the corresponding standalone lighting model.
+    std::vector<unsigned char> lighting[3];
+    for(int mode=0;mode<3;++mode) {
+        const int w=mode==2 ? 320 : 160;
+        auto scene=createAdvancedLightingScene(root,mode);
+        glViewport(0,0,w,180); glDepthMask(GL_TRUE); glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({1.f,.016f,float(w)/180});
+        lighting[mode].resize(w*180*4);
+        glReadPixels(0,0,w,180,GL_RGBA,GL_UNSIGNED_BYTE,lighting[mode].data());
+        GLint vp[4]; glGetIntegerv(GL_VIEWPORT,vp);
+        if(vp[0]!=0 || vp[1]!=0 || vp[2]!=w || vp[3]!=180 || glGetError()!=GL_NO_ERROR)
+            throw std::runtime_error("Advanced lighting leaked viewport or GL error");
+        glUseProgram(0); glBindVertexArray(0);
+    }
+    size_t lightingDifference=0,woodPixels=0;
+    for(int y=0;y<180;++y) for(int x=0;x<160;++x) {
+        size_t p=(y*160+x)*4;
+        if(std::abs(int(lighting[0][p])-int(lighting[1][p]))>2) ++lightingDifference;
+        if(lighting[0][p]>lighting[0][p+2]+5) ++woodPixels;
+        for(int side=0;side<2;++side) for(int c=0;c<3;++c) {
+            size_t q=(y*320+side*160+x)*4+c;
+            if(std::abs(int(lighting[2][q])-int(lighting[side][p+c]))>1)
+                throw std::runtime_error("Advanced lighting comparison views disagree");
+        }
+    }
+    if(lightingDifference<50 || woodPixels<100)
+        throw std::runtime_error("Advanced lighting lacks wood texture or distinct highlights");
+    std::cout << "PASS Phong / Blinn-Phong lighting comparison\n";
+    // Gamma panes must match standalone views, and enabling framebuffer sRGB
+    // externally must not double-encode the manually corrected output.
+    std::vector<unsigned char> gammaViews[4];
+    for(int mode=0;mode<4;++mode) {
+        auto scene=createGammaCorrectionScene(root,mode);
+        int w=mode==2 ? 320 : 160;
+        glViewport(0,0,w,180); glDepthMask(GL_TRUE); glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_FRAMEBUFFER_SRGB);
+        scene->render({1.f,.016f,float(w)/180});
+        GLint vp[4]; glGetIntegerv(GL_VIEWPORT,vp);
+        if(!glIsEnabled(GL_FRAMEBUFFER_SRGB) || vp[0]!=0 || vp[1]!=0 || vp[2]!=w || vp[3]!=180)
+            throw std::runtime_error("Gamma correction leaked viewport or sRGB state");
+        glDisable(GL_FRAMEBUFFER_SRGB);
+        gammaViews[mode].resize(w*180*4);
+        glReadPixels(0,0,w,180,GL_RGBA,GL_UNSIGNED_BYTE,gammaViews[mode].data());
+        if(glGetError()!=GL_NO_ERROR) throw std::runtime_error("Gamma correction GL error");
+        glUseProgram(0); glBindVertexArray(0);
+    }
+    size_t gammaDifference=0,missingDecodeBrighter=0;
+    for(int y=0;y<180;++y) for(int x=0;x<160;++x) {
+        size_t p=(y*160+x)*4;
+        if(std::abs(int(gammaViews[0][p])-int(gammaViews[1][p]))>3) ++gammaDifference;
+        if(gammaViews[3][p]>gammaViews[1][p]+5) ++missingDecodeBrighter;
+        for(int side=0;side<2;++side) for(int c=0;c<3;++c) {
+            size_t q=(y*320+side*160+x)*4+c;
+            if(std::abs(int(gammaViews[2][q])-int(gammaViews[side][p+c]))>1)
+                throw std::runtime_error("Gamma comparison pane differs from standalone view");
+        }
+    }
+    if(gammaDifference<100 || missingDecodeBrighter<100)
+        throw std::runtime_error("Gamma correction or sRGB texture decoding has no visible effect");
+    std::cout << "PASS gamma correction, sRGB decoding and comparison\n";
+    // A skinned triangle must move with its bone; static import remains fixed.
+    for(bool animated : {false,true}) {
+        ModelViewOptions options; options.skeletalAnimation=animated;
+        auto scene=createModelScene(root,root+"/resources/models/animated-triangle/triangle.gltf",options);
+        std::vector<unsigned char> first(160*90*4),second(first.size());
+        glViewport(0,0,160,90); glDepthMask(GL_TRUE); glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({0,0,16.f/9.f});
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,first.data());
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        scene->render({.5f,.5f,16.f/9.f});
+        glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,second.data());
+        size_t changed=0,visible=0;
+        for(size_t p=0;p<first.size();p+=4) {
+            if(first[p]) ++visible;
+            if(first[p]!=second[p]) ++changed;
+        }
+        if(!visible || (animated ? changed<50 : changed!=0) || glGetError()!=GL_NO_ERROR)
+            throw std::runtime_error("Skeletal animation/static model regression");
+        glUseProgram(0); glBindVertexArray(0);
+    }
+    std::cout << "PASS skeletal animation loading and bone motion\n";
+    {
+        auto scene=createModelScene(root,root+"/resources/models/animated-triangle/triangle.gltf");
+        auto capture=[&](float dt) {
+            glViewport(0,0,160,90); glDepthMask(GL_TRUE); glClearColor(0,0,0,1);
+            glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            scene->render({.5f,dt,16.f/9.f});
+            std::vector<unsigned char> pixels(160*90*4);
+            glReadPixels(0,0,160,90,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
+            return pixels;
+        };
+        const auto original=capture(0);
+        toggleFirstCheckbox(*scene);
+        const auto animated=capture(.5f);
+        size_t changed=0;
+        for(size_t p=0;p<original.size();p+=4) if(original[p]!=animated[p]) ++changed;
+        if(changed<50) throw std::runtime_error("Enabling skeletal animation after loading has no effect");
+        toggleFirstCheckbox(*scene);
+        if(capture(.5f)!=original) throw std::runtime_error("Disabling skeletal animation did not restore static model");
+        if(glGetError()!=GL_NO_ERROR) throw std::runtime_error("Animation mode toggle GL error");
+        glUseProgram(0); glBindVertexArray(0);
+    }
+    std::cout << "PASS animation toggle on already loaded model\n";
+
     // Geometry inspection must work even when the imported model has a texture.
     size_t solidPixels=0;
     for(int display=0;display<3;++display) {

@@ -42,8 +42,10 @@ void scrollCallback(GLFWwindow* window, double, double y) {
 
 // 摄像机输入集中在主循环转发，场景本身不注册 GLFW 回调。
 void run(GLFWwindow* window, InputState& state, const std::string& root) {
-    int selected = 0;
-    auto scene = createScene(0, root);
+    // -1 表示 Home；首页不持有渲染场景。
+    int selected = -1;
+    std::unique_ptr<Scene> scene;
+    bool resetControlsScroll = false;
     std::string error;
     double previous = glfwGetTime();
     while (!glfwWindowShouldClose(window)) {
@@ -60,65 +62,99 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(16, 16), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_FirstUseEver);
-        ImGui::Begin("LearnOpenGL Scenes");
-        ImGui::TextUnformatted("Select one scene to render:");
-        if (ImGui::Button("Load local model...")) {
+        ImGui::SetNextWindowSize(ImVec2(420, 620), ImGuiCond_FirstUseEver);
+        // 固定窗口 ID，返回 Home 时保留位置和尺寸；标题随页面变化。
+        const std::string title = (selected < 0 ? std::string("Home") :
+            std::string(availableScenes()[selected].name)) + "###SceneBrowser";
+        const bool panelVisible = ImGui::Begin(title.c_str(), nullptr,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        int requested = -1;
+        bool goHome = false, loadModel = false;
+        const auto& options = availableScenes();
+        if (panelVisible) {
+            if (selected < 0) {
+                ImGui::TextUnformatted("LearnOpenGL scene browser");
+                ImGui::TextWrapped("Choose a scene below. Return Home to explore another topic.");
+                ImGui::Separator();
+                ImGui::BeginChild("HomeScenes", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()*2));
+                for (const auto& category : availableSceneCategories()) {
+                    if (ImGui::CollapsingHeader(category.name, ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::Indent();
+                        for (int index = 0; index < static_cast<int>(options.size()); ++index) {
+                            if (options[index].category != category.category) continue;
+                            ImGui::PushID(index);
+                            if (ImGui::Selectable(options[index].name, false, 0, ImVec2(0, 25)))
+                                requested = index;
+                            ImGui::PopID();
+                        }
+                        if (category.category == SceneCategory::Models)
+                            loadModel = ImGui::Button("Load local model...");
+                        ImGui::Unindent();
+                        ImGui::Spacing();
+                    }
+                }
+                ImGui::EndChild();
+            } else {
+                goHome = ImGui::Button("< Back to Home");
+                ImGui::Separator();
+                for (const auto& category : availableSceneCategories())
+                    if (category.category == options[selected].category)
+                        ImGui::TextDisabled("%s", category.name);
+                ImGui::TextWrapped("%s", options[selected].name);
+                if (scene->usesCamera()) {
+                    ImGui::TextUnformatted("WASD: move | RMB + drag: look");
+                    ImGui::TextUnformatted("Scroll: zoom | Esc: exit");
+                }
+                ImGui::Separator();
+                // 进入场景后只有当前场景的交互内容，不再展示其他场景入口。
+                ImGui::BeginChild("SceneControls", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()*2));
+                if (resetControlsScroll) { ImGui::SetScrollY(0); resetControlsScroll = false; }
+                if (!goHome) scene->drawControls();
+                ImGui::EndChild();
+            }
+            if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
+            ImGui::Separator();
+            ImGui::Text("%.1f FPS", ImGui::GetIO().Framerate);
+        }
+        ImGui::End();
+
+        // 面板绘制结束后统一执行导航，避免析构仍在提交控件的场景。
+        if (goHome || requested >= 0 || loadModel) {
             try {
-                const std::string path = selectModelFile();
-                if (!path.empty()) {
-                    scene = createModelScene(root, path);
-                    selected = 1;
-                    error.clear();
-                    state.firstMouse = true;
-                    state.mouseX = state.mouseY = state.scroll = 0;
+                if (goHome) {
+                    glUseProgram(0); glBindVertexArray(0);
+                    scene.reset(); selected = -1; error.clear();
+                } else {
+                    std::unique_ptr<Scene> next;
+                    if (loadModel) {
+                        const std::string path = selectModelFile();
+                        if (!path.empty()) { next = createModelScene(root, path); requested = 1; }
+                    } else next = createScene(requested, root);
+                    if (next) {
+                        glUseProgram(0); glBindVertexArray(0);
+                        scene = std::move(next); selected = requested; error.clear();
+                        resetControlsScroll = true;
+                    }
                 }
             } catch (const std::exception& e) {
-                error = e.what();
-                std::cerr << error << '\n';
+                // 加载失败保留当前页面；Home 上可继续选择其他场景。
+                error = e.what(); std::cerr << error << '\n';
             }
-            // 系统对话框可能泵入鼠标事件；取消或加载失败也不沿用这些位移。
+            // 导航和系统对话框均可能产生鼠标事件，不将其传给新场景。
             state.firstMouse = true;
             state.mouseX = state.mouseY = state.scroll = 0;
         }
-        const auto& options = availableScenes();
-        for (int index = 0; index < static_cast<int>(options.size()); ++index) {
-            if (ImGui::RadioButton(options[index].name, selected == index) && selected != index) {
-                try {
-                    // 加载失败时保留旧场景，用户仍可操作面板。
-                    auto next = createScene(index, root);
-                    scene = std::move(next);
-                    selected = index;
-                    error.clear();
-                    state.firstMouse = true;
-                    state.mouseX = state.mouseY = state.scroll = 0;
-                } catch (const std::exception& e) {
-                    error = e.what();
-                    std::cerr << error << '\n';
-                }
-            }
-        }
-        ImGui::Separator();
-        ImGui::Text("%.1f FPS", ImGui::GetIO().Framerate);
-        if (scene->usesCamera()) {
-            ImGui::TextUnformatted("WASD: move | RMB + drag: look");
-            ImGui::TextUnformatted("Scroll: zoom | Esc: exit");
-        }
-        if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
-        // 场景自己声明参数控件，主循环不必了解纹理混合或材质的具体实现。
-        scene->drawControls();
-        ImGui::End();
 
         // 只在控制面板外采集 3D 相机输入，避免 WASD 与 UI 键盘操作冲突。
         SceneInput input;
         const auto& io = ImGui::GetIO();
-        if (scene->usesCamera() && !io.WantCaptureKeyboard && glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
+        if (scene && scene->usesCamera() && !io.WantCaptureKeyboard && glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
             input.forward = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
             input.backward = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
             input.left = glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
             input.right = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
         }
-        if (scene->usesCamera() && !io.WantCaptureMouse && glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
+        if (scene && scene->usesCamera() && !io.WantCaptureMouse && glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
             // 不锁住光标，随时能返回面板切换场景。
             if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
                 input.mouseX = state.mouseX;
@@ -127,7 +163,7 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
             input.scroll = state.scroll;
         }
         state.mouseX = state.mouseY = state.scroll = 0;
-        scene->input(input, deltaTime);
+        if (scene) scene->input(input, deltaTime);
         int width = 0, height = 0;
         // 帧缓冲是实际像素大小，高分屏可能不同于窗口逻辑尺寸；viewport 和 aspect 要一致。
         glfwGetFramebufferSize(window, &width, &height);
@@ -136,7 +172,7 @@ void run(GLFWwindow* window, InputState& state, const std::string& root) {
             glClearColor(.12f, .14f, .18f, 1);
             // 每帧清除颜色和上一帧的深度；glClearColor 只设状态，glClear 才执行清除。
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            scene->render({static_cast<float>(now), deltaTime, static_cast<float>(width) / height});
+            if (scene) scene->render({static_cast<float>(now), deltaTime, static_cast<float>(width) / height});
         }
         // 场景先画、GUI 后画，使控制面板不被场景遮住或被场景后期滤镜处理。
         ImGui::Render();

@@ -27,7 +27,10 @@ public:
     virtual bool usesCamera() const { return false; }
 };
 
-struct SceneInfo { const char* name; };
+enum class SceneCategory { Basics, Textures, Lighting, Rendering, Models };
+struct SceneCategoryInfo { SceneCategory category; const char* name; };
+struct SceneInfo { const char* name; SceneCategory category; };
+const std::vector<SceneCategoryInfo>& availableSceneCategories();
 // 列表顺序与工厂索引对应，供控制面板和冒烟测试共同使用。
 const std::vector<SceneInfo>& availableScenes();
 std::unique_ptr<Scene> createScene(int index, const std::string& root);

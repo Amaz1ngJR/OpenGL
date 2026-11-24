@@ -37,7 +37,17 @@
 
 ## 已实现的场景
 
-启动时只显示一个窗口和 ImGui 控制面板，不绘制场景。面板中可单选：
+启动时进入 **Home**，按类别选择场景。进入后隐藏其他场景入口，仅显示当前场景的控制项；顶部的 **Back to Home** 始终可见，参数区独立滚动。返回 Home 会释放当前场景，再选择时使用初始参数。
+
+| Home 分类 | 场景 |
+| --- | --- |
+| Basics & geometry（基础几何） | No scene、Triangle、Uniform rectangle、Transform+Face culling |
+| Textures & environment maps（纹理与环境贴图） | Texture、Cubemaps |
+| Lighting & color（光照与颜色） | Phong lighting + materials、Advanced lighting: Phong / Blinn-Phong、Gamma correction |
+| Rendering techniques（渲染技术） | Depth testing、Stencil testing、Blending、Framebuffers、Anti Aliasing |
+| Models & instancing（模型与实例化） | Model viewer、Asteroid belt、Solar system，以及 Load local model... 快捷入口 |
+
+已实现场景：
 
 1. **Model viewer**：通过原生文件对话框选择本地模型，显示基础材质和贴图，并使用键鼠调整视角。
 2. **Triangle**：顶点颜色渐变三角形。
@@ -53,6 +63,8 @@
 12. **Asteroid belt**：火星与环形岩石阵列，对比普通绘制和实例化绘制，可调整数量、分布与公转。
 13. **Solar system**：太阳与八大行星，土星带环；全部共用同一份程序生成的单位球。
 14. **Anti Aliasing**：可切换 MSAA、FXAA、SSAA，并对比无抗锯齿和放大边缘像素。
+15. **Advanced lighting: Phong / Blinn-Phong**：木地板高光的算法切换与并排对比。
+16. **Gamma correction**：sRGB 纹理解码、输出编码与光照衰减对比。
 
 场景按需创建。切换时先创建新场景，创建成功后再销毁旧场景；场景独占的 shader、纹理和网格对象会随场景析构释放。3D 场景支持 **WASD** 移动、按住鼠标右键拖动视角、滚轮缩放；**ESC** 退出。ImGui 标签使用英文，避免默认字体缺少中文字形。
 
@@ -169,6 +181,27 @@
 - 默认左右对比：左边无抗锯齿，右边为当前算法，同一相机、构图、原始像素密度。`Pixel magnification` 放大中心像素以观察边缘，支持 WASD、右键及滚轮控制。
 - 窗口尺寸变化及算法/采样数切换时重新分配附件并检查完整性，绘制后恢复 FBO、视口、多重采样及深度状态。ImGui 不受图像处理影响。
 
+## 高级光照：Phong / Blinn-Phong
+
+**Advanced lighting: Phong / Blinn-Phong** 使用 `resources/textures/wood.png` 搭建教程中的木地板。可选择 Phong、Blinn-Phong 或并排对比（左 Phong、右 Blinn-Phong）；并排模式的两侧使用同一相机和光源，显示完整的相同视角。
+
+- 默认反光度为 Phong 8、Blinn-Phong 32，可分别调整；指数越大，高光越集中。Blinn-Phong 通常需要 Phong 的 2–4 倍指数来接近相同的高光宽度。
+- 点击 **Broad highlight: 1 / 4** 并启用 **Specular only**，观察低反光度下 Phong 高光在视线与反射向量夹角超过 90° 时被截断的边缘，与半程向量方法的差异。
+- 可调整高光强度、光源位置，使用 WASD、右键拖动、滚轮改变共享相机；光源默认位于原点，地面位于 y=-0.5，不加入距离衰减或 Gamma 校正以保持本节的对比条件。
+
+实现位于 `engine/src/scenes/AdvancedLightingScene.cpp` 与 `resources/shaders/advanced-lighting/`，参考[高级光照教程](https://learnopengl-cn.github.io/05%20Advanced%20Lighting/01%20Advanced%20Lighting/)。
+
+## 伽马校正
+
+**Gamma correction** 按[Gamma 校正教程](https://learnopengl-cn.github.io/05%20Advanced%20Lighting/02%20Gamma%20Correction/)搭建木地板与四盏强度递增的白光，使用 `resources/textures/wood.png`。支持未校正、校正、并排对比（左未校正、右校正），以及故意缺少纹理解码的 **Output only** 模式。
+
+- 校正路径：使用 `GL_SRGB8_ALPHA8` 采样木纹并自动解码到线性空间，累加光照后在片段着色器最后执行 `pow(color, 1/gamma)`。默认 Gamma 为 2.2，是输出 sRGB 曲线的近似；纹理解码采用硬件 sRGB 曲线，alpha 不转换。
+- **Decode sRGB wood texture** 和 **Encode final output** 可分别关闭校正视图的输入解码或输出编码，便于检查每个步骤；未校正模式跳过两步，Output only 模式始终跳过输入解码。缺少输入解码时再次编码会使木纹偏亮。
+- **Light attenuation** 默认随输出校正切换 `1/r`、`1/r²`，也可固定为其中一种，单独比较颜色空间变化。可调整输出 Gamma 和光源强度，共享相机使用 WASD、右键拖动和滚轮操作。
+- 手动输出编码期间禁用 `GL_FRAMEBUFFER_SRGB`，绘制结束恢复，避免重复编码以及影响 ImGui 和其他场景。场景使用 LDR 输出，过强的光照可能饱和，不做 HDR 或色调映射。
+
+实现位于 `engine/src/scenes/GammaCorrectionScene.cpp` 与 `resources/shaders/gamma-correction/`。
+
 ## 纹理参数面板
 
 `Texture` 合并了原先的基础纹理和混合纹理演示，使用 `resources/shaders/textures/shader.vs/.fs`：
@@ -219,7 +252,7 @@ xmake run OpenGLLearn --smoke-test
 
 ## 本地模型预览
 
-仓库在 `resources/models/` 按“一模型一文件夹”保留可直接打开的 Assimp 学习模型：`cube/` 用于查看几何导入，`textured-quad/` 用于查看外部贴图加载。模型的材质与贴图放在各自模型目录中，请勿拆开移动。点击主面板的 **Load local model...** 可打开本地模型，也可以使用这些仓库示例。也可以先选择 Model viewer，再点 **Open local model...**。macOS 使用 NSOpenPanel，Windows 使用原生文件对话框；取消选择不改变当前场景，导入失败会显示错误并保留旧模型。
+仓库在 `resources/models/` 按“一模型一文件夹”保留可直接打开的 Assimp 学习模型：`cube/` 用于查看几何导入，`textured-quad/` 用于查看外部贴图加载。模型的材质与贴图放在各自模型目录中，请勿拆开移动。点击 Home 的 **Models & instancing** 分类中的 **Load local model...** 可打开本地模型，也可以使用这些仓库示例。也可以先选择 Model viewer，再点 **Open local model...**。macOS 使用 NSOpenPanel，Windows 使用原生文件对话框；取消选择不改变当前页面，导入失败会显示错误并保留旧模型。
 
 - 导入时处理节点变换、三角化和法线生成；模型自动居中并缩放至合适大小。
 - **W/A/S/D** 移动，**按住鼠标右键拖动**改变朝向，**滚轮**改变视野，**Reset view** 恢复初始视角。请在 ImGui 面板外操作，避免与控件交互冲突。
@@ -227,7 +260,7 @@ xmake run OpenGLLearn --smoke-test
 - `Show textures` 可关闭纹理及材质底色，改用可调的统一灰色表面，方便观察几何。`Flat triangle shading` 使用逐三角形面法线显示面片，不改变源网格。
 - `Display mode` 支持实体表面、实体叠加三角边、纯三角线框。线框显示 Assimp 三角化后的拓扑，深度预绘制隐藏背后的边，使用多边形偏移减轻闪烁；绘制后恢复 OpenGL 状态。
 - 如果贴图上下颠倒，可勾选 **Flip texture V**。OBJ 的 `.mtl` 及贴图、glTF 的 `.bin` 等关联文件应随模型保留。
-- 当前是静态模型预览，不播放骨骼动画，不实现完整 PBR、透明混合及法线/金属度贴图。图片解码受 stb_image 支持格式限制。
+- **Load skeletal animations** 可在打开模型前或打开后切换；已有模型会立即重新加载，保留视角、朝向和显示设置，启用后从头播放文件内的骨骼动画，保留节点层级并插值平移、旋转和缩放；支持动画片段选择、播放/暂停、循环、速度、时间轴、重播和 Bind pose。默认仍为静态加载。使用 CPU 蒙皮保留全部顶点权重，大模型播放会增加 CPU 与上传开销；不支持独立动画文件重定向、动画混合或 Morph/Blend Shape 动画。不实现完整 PBR、透明混合及法线/金属度贴图。图片解码受 stb_image 支持格式限制。
 - 模型加载同步完成，大型模型可能暂时阻塞界面。中文文件路径使用 UTF-8；ImGui 默认字体仍不含完整中文字形，路径文字可能显示为方块，不影响实际路径解析。
 
 现有冒烟入口也可指定示例或自己的模型，验证实际网格渲染（未增加独立测试目标）：
@@ -287,7 +320,7 @@ xmake run OpenGLLearn
 
 1. 在 `resources/shaders/` 下按类别保存该场景的 `.vs` 和 `.fs` 文件。
 2. 在 `engine/src/scenes/<场景名>Scene.cpp` 中实现一个 `Scene` 派生类，并导出创建函数，在 `scenes/SceneFactories.h` 中声明。共用网格、纹理和相机辅助代码位于 `scenes/SceneSupport.h/.cpp`。场景构造函数创建所需 GPU 资源，`render()` 绘制场景，析构时释放资源。
-3. 在 `engine/src/Scenes.cpp` 的 `sceneInfos` 中增加面板名称，并在 `createScene()` 的工厂分支中调用该场景的创建函数；保持列表顺序与工厂索引一致。
+3. 在 `engine/src/Scenes.cpp` 的 `sceneInfos` 中增加面板名称和 `SceneCategory` 分类，并在 `createScene()` 的工厂分支中调用该场景的创建函数；保持列表顺序与工厂索引一致。Home 根据分类元数据自动分组，不需要修改菜单循环。
 4. 若场景需要相机输入，继承 `CameraScene` 或实现 `usesCamera()` 与 `input()`。
 5. 将新场景源文件加入 `CMakeLists.txt`（xmake 自动包含 `scenes/*.cpp`），使用 CMake 和 xmake 构建，并运行 `--smoke-test` 验证。
 

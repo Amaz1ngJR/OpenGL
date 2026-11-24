@@ -50,6 +50,8 @@ add_executable(OpenGLLearn
     engine/src/scenes/AsteroidBeltScene.cpp
     engine/src/scenes/SolarSystemScene.cpp
     engine/src/scenes/LightingScene.cpp
+    engine/src/scenes/AdvancedLightingScene.cpp
+    engine/src/scenes/GammaCorrectionScene.cpp
     engine/src/ModelScene.cpp
     engine/src/FileDialog.cpp
     third_party/imgui/imgui.cpp

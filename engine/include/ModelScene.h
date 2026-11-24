@@ -4,6 +4,7 @@
 struct ModelViewOptions {
     enum class Display { Surface, SurfaceWire, Wire };
     Display display = Display::Surface;
+    bool skeletalAnimation = false;
     bool textures = true;
     bool flatShading = false;
 };

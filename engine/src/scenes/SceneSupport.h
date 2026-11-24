@@ -96,7 +96,7 @@ private:
 
 class Texture {
 public:
-    explicit Texture(const std::string& filename, GLenum wrap = GL_REPEAT)
+    explicit Texture(const std::string& filename, GLenum wrap = GL_REPEAT, bool srgb = false)
         : wrapS_(wrap == GL_MIRRORED_REPEAT ? 1 : wrap == GL_CLAMP_TO_EDGE ? 2 : wrap == GL_CLAMP_TO_BORDER ? 3 : 0), wrapT_(wrapS_) {
         int width = 0, height = 0, channels = 0;
         // 常见图片以左上角为起点；本教程的二维 UV 以左下角为起点，所以翻转图像行。
@@ -107,7 +107,8 @@ public:
         glGenTextures(1, &id_);
         glBindTexture(GL_TEXTURE_2D, id_);
         // GL_RGBA8 是 GPU 存储格式；GL_RGBA/UNSIGNED_BYTE 描述 CPU 像素格式和元素类型。
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        // 颜色贴图可使用 sRGB 存储，让采样器在过滤前将 RGB 解码到线性空间；alpha 不转换。
+        glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         stbi_image_free(pixels);
         // 生成逐级缩小至 1x1 的 mipmap，供缩小过滤选择；不是每帧重建。
         glGenerateMipmap(GL_TEXTURE_2D);
