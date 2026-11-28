@@ -8,15 +8,15 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
-#include <iostream>
 #include <vector>
 
 namespace {
-// 通过真实 ImGui 鼠标事件切换场景的首个复选框。
-void toggleFirstCheckbox(Scene& scene) {
+// 通过真实 ImGui 鼠标事件点击面板顶部的指定行（含等高的折叠标题）。
+void clickControlRow(Scene& scene, int index) {
     ImVec2 checkbox;
     for (int step = 0; step < 4; ++step) {
         ImGui_ImplOpenGL3_NewFrame();
@@ -30,13 +30,15 @@ void toggleFirstCheckbox(Scene& scene) {
         ImGui::Begin("Pause control test");
         checkbox = ImGui::GetCursorScreenPos();
         checkbox.x += 5;
-        checkbox.y += 5;
+        checkbox.y += 5 + index * ImGui::GetFrameHeightWithSpacing();
         scene.drawControls();
         ImGui::End();
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 }
+
+void toggleFirstCheckbox(Scene& scene) { clickControlRow(scene, 0); }
 }
 
 // 在真实 OpenGL 上下文下反复创建/绘制/销毁所有场景，检查 GL 错误和非空画面。
@@ -160,6 +162,60 @@ void smokeTest(GLFWwindow* window, const std::string& root, const std::string& m
                 throw std::runtime_error(std::string("OpenGL error: ") + availableScenes()[index].name);
             std::cout << "PASS " << round + 1 << ": " << availableScenes()[index].name << '\n';
         }
+    }
+    {
+        auto scene = createShadowScene(root);
+        const int x = width > 3 ? 3 : 0, y = height > 5 ? 5 : 0;
+        const int w = std::min(640, width - x), h = std::min(360, height - y);
+        auto capture = [&](float dt) {
+            std::vector<unsigned char> image(w*h*4);
+            glViewport(x, y, w, h);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            scene->render({1.f + dt, dt, float(w) / h});
+            GLint draw, read, viewport[4];
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+            glGetIntegerv(GL_VIEWPORT, viewport);
+            if (draw != 0 || read != 0 || viewport[0] != x || viewport[1] != y || viewport[2] != w || viewport[3] != h)
+                throw std::runtime_error("Shadow scene did not restore target/viewport");
+            glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+            return image;
+        };
+        auto shadowed = capture(0);
+        toggleFirstCheckbox(*scene);
+        auto unshadowed = capture(0);
+        auto waving = capture(.7f);
+        size_t darkened = 0, moved = 0;
+        for (size_t p = 0; p < shadowed.size(); p += 4) {
+            if (int(unshadowed[p]) - int(shadowed[p]) > 8) ++darkened;
+            if (std::abs(int(waving[p]) - int(unshadowed[p])) > 8) ++moved;
+        }
+        glUseProgram(0);
+        if (darkened < 100 || moved < 100 || glGetError() != GL_NO_ERROR)
+            throw std::runtime_error("Lulu scene lacks cast shadows or visible bone motion");
+        std::cout << "PASS Lulu scene shadow toggle and bone motion\n";
+
+        // 隐藏灯具，只测聚光灯对物体的照明；分别扣除其他三盏灯的贡献。
+        clickControlRow(*scene, 1); // Show light markers
+        const auto spotLit = capture(0);
+        clickControlRow(*scene, 4); // Spotlight > Enabled（标题在第 3 行，从 0 起）
+        const auto noSpotLit = capture(0);
+        clickControlRow(*scene, 0); // Cast shadows
+        const auto noSpotShadow = capture(0);
+        clickControlRow(*scene, 4); // 重新启用聚光灯，必须重新生成它的深度图。
+        const auto spotShadow = capture(0);
+        auto linearBlue = [](unsigned char value) { return std::pow(value / 255.f, 2.2f); };
+        size_t spotPixels = 0, blockedPixels = 0;
+        for (size_t p = 2; p < spotLit.size(); p += 4) {
+            const float lit = linearBlue(spotLit[p]) - linearBlue(noSpotLit[p]);
+            const float shadow = linearBlue(spotShadow[p]) - linearBlue(noSpotShadow[p]);
+            if (lit > .025f) ++spotPixels;
+            if (lit - shadow > .025f) ++blockedPixels;
+        }
+        glUseProgram(0);
+        if (spotPixels < 100 || blockedPixels < 100 || glGetError() != GL_NO_ERROR)
+            throw std::runtime_error("Spotlight does not independently light the scene and cast shadows");
+        std::cout << "PASS spotlight illumination and shadow map\n";
     }
     // Exercise every post-process shader branch and attachment reallocation.
     std::vector<unsigned char> original(160*90*4), output(original.size());

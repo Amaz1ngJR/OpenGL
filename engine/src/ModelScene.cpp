@@ -2,6 +2,7 @@
 #include "Camera.h"
 #include "FileDialog.h"
 #include "Shader.h"
+#include "scenes/SceneModel.h"
 #include "imgui.h"
 #include "stb_image.h"
 #include <assimp/Importer.hpp>
@@ -85,12 +86,14 @@ public:
     }
     ModelMesh(const ModelMesh&) = delete;
     ModelMesh& operator=(const ModelMesh&) = delete;
-    void draw(Shader& shader) const {
+    void draw(Shader& shader, bool materials = true) const {
         // 每个子网格可以使用不同材质；必须在其 draw call 之前更新 uniform 和纹理绑定。
-        shader.setVec3("baseColor", color_);
-        shader.setInt("hasTexture", texture_ ? 1 : 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture_ ? texture_->id() : 0);
+        if (materials) {
+            shader.setVec3("baseColor", color_);
+            shader.setInt("hasTexture", texture_ ? 1 : 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture_ ? texture_->id() : 0);
+        }
         glBindVertexArray(vao_);
         glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_INT, nullptr);
     }
@@ -101,7 +104,7 @@ private:
     GLsizei count_;
 };
 
-class Model {
+class Model final : public SceneModel {
 public:
     explicit Model(const std::string& path, bool animated) : animated_(animated) {
         // 烘焙节点层级变换（包含法线），避免多节点模型的位置、旋转或缩放丢失。
@@ -184,6 +187,7 @@ public:
         }
         if (meshes_.empty()) throw std::runtime_error("Model contains no triangle meshes");
         center_ = lower * .5f + upper * .5f;
+        groundY_ = lower.y;
         // 包围盒中点用来居中，最大边长用来统一显示尺度，不改动源模型文件。
         const glm::vec3 extent = upper - lower;
         const float size = std::max({extent.x, extent.y, extent.z});
@@ -195,11 +199,12 @@ public:
     }
     unsigned animationCount() const { return animated_ ? scene_->mNumAnimations : 0; }
     const char* animationName(unsigned clip) const { return scene_->mAnimations[clip]->mName.C_Str(); }
-    double duration(unsigned clip) const {
+    double duration(unsigned clip) const override {
+        if (clip >= animationCount()) return 0;
         const auto& a=*scene_->mAnimations[clip];
         return a.mDuration / (a.mTicksPerSecond>0 ? a.mTicksPerSecond : 25.0);
     }
-    void update(int clip, double seconds) {
+    void update(int clip, double seconds) override {
         if(!animated_) return;
         const aiAnimation* animation=clip>=0 && unsigned(clip)<animationCount() ? scene_->mAnimations[clip] : nullptr;
         double ticks=animation ? seconds*(animation->mTicksPerSecond>0 ? animation->mTicksPerSecond : 25.0) : 0;
@@ -242,6 +247,12 @@ public:
         shader.setMat4("model", orientation * glm::scale(glm::mat4(1), glm::vec3(scale_)) *
                                  glm::translate(glm::mat4(1), -center_));
         for (const auto& mesh : meshes_) mesh->draw(shader);
+    }
+    void drawPlaced(Shader& shader, const glm::mat4& placement, bool materials) const override {
+        const glm::vec3 anchor(center_.x, groundY_, center_.z);
+        shader.setMat4("model", placement * glm::scale(glm::mat4(1), glm::vec3(scale_)) *
+                                 glm::translate(glm::mat4(1), -anchor));
+        for (const auto& mesh : meshes_) mesh->draw(shader, materials);
     }
     size_t meshCount() const { return meshes_.size(); }
     size_t triangles() const { return triangles_; }
@@ -330,6 +341,7 @@ private:
         return std::make_shared<ModelTexture>(pixels.get(), width, height);
     }
     glm::vec3 center_{0};
+    float groundY_ = 0;
     float scale_ = 1;
     size_t triangles_ = 0;
     std::vector<std::unique_ptr<ModelMesh>> meshes_;
@@ -524,4 +536,8 @@ private:
 
 std::unique_ptr<Scene> createModelScene(const std::string& root, const std::string& modelPath, const ModelViewOptions& options) {
     return std::make_unique<ModelScene>(root, modelPath, options);
+}
+
+std::unique_ptr<SceneModel> loadSceneModel(const std::string& path, bool animated) {
+    return std::make_unique<Model>(path, animated);
 }

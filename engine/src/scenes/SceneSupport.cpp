@@ -11,7 +11,7 @@ std::unique_ptr<Shader> loadShader(const std::string& root, const std::string& d
 }
 
 // 每个面独立顶点，确保光照场景有正确的面法线和纹理坐标。
-std::vector<float> cubeVertices(bool withNormals) {
+std::vector<float> cubeVertices(bool withNormals, bool withUV) {
     // 按每个面生成独立顶点，避免立方体边角处法线插值造成光照失真。
     const glm::vec3 corners[6][4] = {
         {{-.5f,-.5f,.5f}, {.5f,-.5f,.5f}, {.5f,.5f,.5f}, {-.5f,.5f,.5f}},
@@ -31,9 +31,9 @@ std::vector<float> cubeVertices(bool withNormals) {
         for (int index : order) {
             const auto& p = face[index];
             vertices.insert(vertices.end(), {p.x, p.y, p.z});
-            // 输出两种交错布局：位置+法线供光照，或位置+UV 供贴图演示。
+            // 光照和贴图同时启用时输出位置、法线、UV；保留已有的两种布局。
             if (withNormals) vertices.insert(vertices.end(), {normal.x, normal.y, normal.z});
-            else vertices.insert(vertices.end(), {uv[index].x, uv[index].y});
+            if (!withNormals || withUV) vertices.insert(vertices.end(), {uv[index].x, uv[index].y});
         }
     }
     return vertices;

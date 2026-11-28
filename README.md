@@ -43,7 +43,7 @@
 | --- | --- |
 | Basics & geometry（基础几何） | No scene、Triangle、Uniform rectangle、Transform+Face culling |
 | Textures & environment maps（纹理与环境贴图） | Texture、Cubemaps |
-| Lighting & color（光照与颜色） | Phong lighting + materials、Advanced lighting: Phong / Blinn-Phong、Gamma correction |
+| Lighting & color（光照与颜色） | Phong lighting + materials、Advanced lighting: Phong / Blinn-Phong、Gamma correction、Shadow mapping |
 | Rendering techniques（渲染技术） | Depth testing、Stencil testing、Blending、Framebuffers、Anti Aliasing |
 | Models & instancing（模型与实例化） | Model viewer、Asteroid belt、Solar system，以及 Load local model... 快捷入口 |
 
@@ -65,6 +65,7 @@
 14. **Anti Aliasing**：可切换 MSAA、FXAA、SSAA，并对比无抗锯齿和放大边缘像素。
 15. **Advanced lighting: Phong / Blinn-Phong**：木地板高光的算法切换与并排对比。
 16. **Gamma correction**：sRGB 纹理解码、输出编码与光照衰减对比。
+17. **Shadow mapping**：木地板、左侧 PBR 砖墙、贴图箱子、蓝车噜噜、傻笑噜噜和播放骨骼动画的挥手噜噜。点光源用立方体深度图，朝下的矩形面光源用 4 个采样点近似软阴影，平行光用正交深度图，聚光灯用独立的透视深度图。聚光灯支持位置、朝向与内外锥半角调节，锥边渐变衰减；灯筒和镜头随出光方向转动。四种光源可独立开关并调整颜色和强度，点光源、面光源和聚光灯均可重置位置。
 
 场景按需创建。切换时先创建新场景，创建成功后再销毁旧场景；场景独占的 shader、纹理和网格对象会随场景析构释放。3D 场景支持 **WASD** 移动、按住鼠标右键拖动视角、滚轮缩放；**ESC** 退出。ImGui 标签使用英文，避免默认字体缺少中文字形。
 

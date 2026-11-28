@@ -206,5 +206,5 @@ protected:
 
 std::unique_ptr<Shader> loadShader(const std::string& root, const std::string& directory,
                                    const std::string& name = "shader");
-std::vector<float> cubeVertices(bool withNormals);
+std::vector<float> cubeVertices(bool withNormals, bool withUV = false);
 } // namespace sceneSupport

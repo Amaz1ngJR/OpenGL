@@ -22,7 +22,8 @@ const std::vector<SceneInfo> sceneInfos = {
     {"Solar system", SceneCategory::Models},
     {"Anti Aliasing", SceneCategory::Rendering},
     {"Advanced lighting: Phong / Blinn-Phong", SceneCategory::Lighting},
-    {"Gamma correction", SceneCategory::Lighting}
+    {"Gamma correction", SceneCategory::Lighting},
+    {"Shadow mapping", SceneCategory::Lighting}
 };
 const std::vector<SceneCategoryInfo> sceneCategories = {
     {SceneCategory::Basics, "Basics & geometry"},
@@ -57,6 +58,7 @@ std::unique_ptr<Scene> createScene(int index, const std::string& root) {
         case 14: return createAntiAliasingScene(root);
         case 15: return createAdvancedLightingScene(root);
         case 16: return createGammaCorrectionScene(root);
+        case 17: return createShadowScene(root);
         default: throw std::out_of_range("Invalid scene index");
     }
 }
